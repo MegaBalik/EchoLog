@@ -1,0 +1,10 @@
+[Unit]
+Description=EchoLog PostgreSQL backup
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+EnvironmentFile=/var/www/echolog/.env
+ExecStart=/var/www/echolog/deploy/backup_db.sh

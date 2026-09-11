@@ -1,0 +1,47 @@
+{% extends 'outreach/base.html' %}
+{% block title %}{{ batch.name }} · EchoLog{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">Batch</div><h1>{{ batch.name }}</h1><p class="muted">{{ batch.total_count }} recipients · {{ batch.sent_count }} sent · {{ batch.replied_count }} replies</p></div>
+  <div class="head-actions">
+    <span class="pill status-pill-{{ batch.status }}">{{ batch.get_status_display }}</span>
+    {% if batch.status == 'running' %}<form method="post" action="{% url 'outreach:batch_pause' batch.pk %}">{% csrf_token %}<button class="button button-warn" type="submit">Pause batch</button></form>
+    {% elif batch.status != 'completed' %}<form method="post" action="{% url 'outreach:batch_start' batch.pk %}">{% csrf_token %}<button class="button button-primary" type="submit">Start batch</button></form>{% endif %}
+  </div>
+</div>
+
+{% if not gmail_connected %}<div class="message warning"><b>Gmail is not connected.</b> You can prepare and preview the batch, but it will not start sending. <a href="{% url 'outreach:google_connect' %}">Connect Gmail</a>.</div>{% endif %}
+{% if previous_contacts and not batch.allow_recontact %}<div class="message warning">{{ previous_contacts }} imported contact{{ previous_contacts|pluralize }} were contacted in an older batch. They will be automatically skipped unless “allow recontact” is enabled for this batch.</div>{% endif %}
+
+<div class="three-col batch-kpis">
+  <div class="card"><span class="muted">Queue</span><strong>{{ batch.queued_count }}</strong></div>
+  <div class="card"><span class="muted">Daily ceiling</span><strong>{{ batch.daily_limit }}</strong></div>
+  <div class="card"><span class="muted">Follow-up due after</span><strong>{{ default_followup_days|default:14 }} days</strong></div>
+</div>
+
+<div class="two-col">
+  <section class="card form-card">
+    <div class="section-head"><h2>Message frozen with batch</h2></div>
+    <div class="field"><label>Subject</label><div class="readbox">{{ batch.subject }}</div></div>
+    <div class="field"><label>Body</label><pre class="mail-body">{{ batch.body }}</pre></div>
+    <form method="post" action="{% url 'outreach:batch_test_send' batch.pk %}" class="test-send">{% csrf_token %}{{ test_form.email.label_tag }} {{ test_form.email }} <button class="button button-ghost" type="submit">Send test</button></form>
+  </section>
+
+  <section class="card form-card">
+    <div class="section-head"><h2>Preview</h2><span class="muted small">first {{ preview|length }} messages</span></div>
+    {% for mail in preview %}
+      <details class="preview-mail" {% if forloop.first %}open{% endif %}>
+        <summary>{{ mail.to }}</summary>
+        <div class="preview-content"><b>{{ mail.subject }}</b><pre>{{ mail.body }}</pre></div>
+      </details>
+    {% empty %}<p class="muted">No recipients.</p>{% endfor %}
+  </section>
+</div>
+
+<section class="card table-card">
+  <div class="section-head"><h2>Queue preview</h2><span class="muted small">first 50</span></div>
+  <div class="table-scroll"><table><thead><tr><th>#</th><th>Organization</th><th>Email</th><th>Country</th><th>Status</th><th>Sent</th></tr></thead><tbody>
+    {% for r in recipients %}<tr><td>{{ r.queue_position }}</td><td>{{ r.contact.organization_name }}</td><td>{{ r.contact.email }}</td><td>{{ r.contact.country|default:'—' }}</td><td><span class="badge badge-{{ r.status }}">{{ r.communication_label }}</span>{% if r.last_error %}<div class="tiny error-text">{{ r.last_error }}</div>{% endif %}</td><td>{% if r.sent_at %}{{ r.sent_at|date:'j M H:i' }}{% else %}—{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

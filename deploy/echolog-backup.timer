@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily EchoLog PostgreSQL backup
+
+[Timer]
+OnCalendar=03:20
+Persistent=true
+RandomizedDelaySec=300
+Unit=echolog-backup.service
+
+[Install]
+WantedBy=timers.target

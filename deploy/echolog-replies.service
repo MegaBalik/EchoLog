@@ -1,0 +1,13 @@
+[Unit]
+Description=EchoLog check Gmail reply metadata
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/echolog
+EnvironmentFile=/var/www/echolog/.env
+ExecStart=/var/www/echolog/.venv/bin/python manage.py check_gmail_replies
+PrivateTmp=true
+NoNewPrivileges=true

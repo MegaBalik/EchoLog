@@ -1,0 +1,13 @@
+[Unit]
+Description=EchoLog send one queued outreach message
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/echolog
+EnvironmentFile=/var/www/echolog/.env
+ExecStart=/var/www/echolog/.venv/bin/python manage.py send_outreach_queue
+PrivateTmp=true
+NoNewPrivileges=true

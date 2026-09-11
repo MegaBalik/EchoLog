@@ -1,0 +1,19 @@
+[Unit]
+Description=EchoLog Gunicorn
+After=network.target postgresql.service
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/echolog
+EnvironmentFile=/var/www/echolog/.env
+RuntimeDirectory=echolog
+RuntimeDirectoryMode=0755
+ExecStart=/var/www/echolog/.venv/bin/gunicorn --workers 2 --timeout 60 --bind unix:/run/echolog/gunicorn.sock echolog.wsgi:application
+Restart=on-failure
+RestartSec=3
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

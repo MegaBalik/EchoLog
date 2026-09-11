@@ -1,0 +1,32 @@
+{% extends 'outreach/base.html' %}
+{% block title %}New batch · EchoLog{% endblock %}
+{% block content %}
+<div class="page-head"><div><div class="eyebrow">New outreach</div><h1>Create batch</h1><p class="muted">Upload recipients and freeze the exact subject/body used for this campaign.</p></div></div>
+<div class="two-col">
+  <form method="post" enctype="multipart/form-data" class="card form-card stack">{% csrf_token %}
+    {% if form.non_field_errors %}<div class="message error">{{ form.non_field_errors }}</div>{% endif %}
+    {% for field in form %}
+      <div class="field">
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}
+        {% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}
+      </div>
+    {% endfor %}
+    <button class="button button-primary" type="submit">Create batch & import</button>
+  </form>
+  <aside class="card side-card">
+    <h2>Input format</h2>
+    <p class="muted">The easiest TXT format is one recipient per line:</p>
+    <pre>Name - Email - Country
+Alpha Translations - vendor@alpha.de - Germany
+Beta Language - info@beta.at - Austria</pre>
+    <p>CSV/TSV is also accepted. Recommended headers:</p>
+    <pre>name,email,country</pre>
+    <h2>Variables</h2>
+    <p class="muted">You can use these in subject and body:</p>
+    <div class="token-list"><code>{Name}</code><code>{Organization}</code><code>{ContactName}</code><code>{Email}</code><code>{Country}</code></div>
+    <p class="small muted">Unknown/missing values become empty text. Preview the first messages before starting.</p>
+  </aside>
+</div>
+{% endblock %}

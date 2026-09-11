@@ -1,0 +1,63 @@
+{% extends 'outreach/base.html' %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">Outreach cockpit</div>
+    <h1>Batches</h1>
+    <p class="muted">One active batch at a time. EchoLog sends at most {{ daily_limit }} messages per working day.</p>
+  </div>
+  <div class="head-actions">
+    {% if gmail_connected %}<span class="pill pill-good">Gmail connected</span><a class="small" href="{% url 'outreach:google_connect' %}">Reconnect</a>{% else %}<a class="button button-warn" href="{% url 'outreach:google_connect' %}">Connect Gmail</a>{% endif %}
+    <a class="button button-primary" href="{% url 'outreach:batch_create' %}">+ New batch</a>
+  </div>
+</div>
+
+<section class="stats-grid">
+  <div class="stat"><span>Recipients</span><strong>{{ totals.total|default:0 }}</strong></div>
+  <div class="stat"><span>Sent</span><strong>{{ totals.sent|default:0 }}</strong></div>
+  <div class="stat"><span>Replies</span><strong>{{ totals.replied|default:0 }}</strong></div>
+  <div class="stat"><span>Hopeful</span><strong>{{ totals.hopeful|default:0 }}</strong></div>
+  <div class="stat"><span>Active</span><strong>{{ totals.active|default:0 }}</strong></div>
+</section>
+
+<section class="batch-list">
+{% for batch in batches %}
+  <details class="batch-card" {% if batch.status == 'running' %}open{% endif %}>
+    <summary>
+      <div class="batch-summary-main">
+        <span class="status-dot status-{{ batch.status }}"></span>
+        <div>
+          <strong>{{ batch.name }}</strong>
+          <div class="muted small">{{ batch.get_status_display }} · created {{ batch.created_at|date:'j M Y H:i' }}</div>
+        </div>
+      </div>
+      <div class="batch-summary-stats">
+        <span><b>{{ batch.sent_total }}</b> / {{ batch.total }} sent</span>
+        <span><b>{{ batch.replied_total }}</b> replies</span>
+        <span><b>{{ batch.hopeful_total }}</b> hopeful</span>
+        <span><b>{{ batch.active_total }}</b> active</span>
+      </div>
+    </summary>
+    <div class="batch-body">
+      <div class="progress"><span style="width:{% widthratio batch.sent_total batch.total|default:1 100 %}%"></span></div>
+      <div class="batch-meta">
+        <div><span>Subject</span><strong>{{ batch.subject }}</strong></div>
+        <div><span>Daily limit</span><strong>{{ batch.daily_limit }}</strong></div>
+        <div><span>Follow-up</span><strong>{{ default_followup_days|default:14 }} days</strong></div>
+        <div><span>Recontact</span><strong>{% if batch.allow_recontact %}Allowed{% else %}Blocked by default{% endif %}</strong></div>
+      </div>
+      <div class="row-actions">
+        <a class="button button-ghost" href="{% url 'outreach:batch_detail' batch.pk %}">Open batch</a>
+        {% if batch.status == 'running' %}
+          <form method="post" action="{% url 'outreach:batch_pause' batch.pk %}">{% csrf_token %}<button class="button button-warn" type="submit">Pause</button></form>
+        {% elif batch.status != 'completed' %}
+          <form method="post" action="{% url 'outreach:batch_start' batch.pk %}">{% csrf_token %}<button class="button button-primary" type="submit">Start batch</button></form>
+        {% endif %}
+      </div>
+    </div>
+  </details>
+{% empty %}
+  <div class="empty card"><h2>No batches yet</h2><p>Upload your first list and EchoLog will turn it into a controlled queue.</p><a class="button button-primary" href="{% url 'outreach:batch_create' %}">Create first batch</a></div>
+{% endfor %}
+</section>
+{% endblock %}

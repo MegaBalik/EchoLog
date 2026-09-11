@@ -1,0 +1,15 @@
+{% extends 'outreach/base.html' %}
+{% block title %}Login · EchoLog{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+  <div class="card auth-card">
+    <div class="eyebrow">Private tool</div>
+    <h1>EchoLog</h1>
+    <p class="muted">Sign in to manage batches and replies.</p>
+    <form method="post" class="stack">{% csrf_token %}
+      {{ form.as_p }}
+      <button class="button button-primary button-wide" type="submit">Sign in</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

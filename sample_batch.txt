@@ -1,0 +1,3 @@
+Alpha GmbH - vendor@alpha.example - Germany
+Beta Language AG - info@beta.example - Austria
+Gamma Club - hello@gamma.example - Czechia

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run EchoLog send queue every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=20
+Unit=echolog-send.service
+
+[Install]
+WantedBy=timers.target

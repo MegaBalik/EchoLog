@@ -1,0 +1,67 @@
+{% extends 'outreach/base.html' %}
+{% block title %}Report · EchoLog{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">Echoes</div><h1>Report</h1><p class="muted">Delivery status and your own business judgement stay separate.</p></div>
+  <a class="button button-ghost" href="{% url 'outreach:report_export' %}?{{ request.GET.urlencode }}">Export CSV</a>
+</div>
+<form method="get" class="filters card">
+  <input type="search" name="q" value="{{ filters.q }}" placeholder="Search organization, email, notes">
+  <select name="batch"><option value="">All batches</option>{% for b in batches %}<option value="{{ b.id }}" {% if filters.batch == b.id|stringformat:'s' %}selected{% endif %}>{{ b.name }}</option>{% endfor %}</select>
+  <select name="country"><option value="">All countries</option>{% for c in countries %}<option value="{{ c }}" {% if filters.country == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+  <select name="status">
+    <option value="">All statuses</option>
+    <option value="queued" {% if filters.status == 'queued' %}selected{% endif %}>Queued</option>
+    <option value="sent" {% if filters.status == 'sent' %}selected{% endif %}>Sent / waiting</option>
+    <option value="followup" {% if filters.status == 'followup' %}selected{% endif %}>Follow-up due</option>
+    <option value="replied" {% if filters.status == 'replied' %}selected{% endif %}>Replied</option>
+    <option value="bounced" {% if filters.status == 'bounced' %}selected{% endif %}>Bounced</option>
+    <option value="skipped" {% if filters.status == 'skipped' %}selected{% endif %}>Skipped</option>
+  </select>
+  <select name="hope"><option value="">All Hope</option>{% for value,label in hope_choices %}<option value="{{ value }}" {% if filters.hope == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+  <button class="button button-primary" type="submit">Filter</button>
+  <a class="button button-ghost" href="{% url 'outreach:report' %}">Clear</a>
+</form>
+
+<section class="card table-card report-table">
+  <div class="table-scroll"><table>
+    <thead><tr><th>Organization</th><th>Email</th><th>Country</th><th>Batch</th><th>Status</th><th>Hope</th><th>Sent at</th><th>Replied at</th><th>Notes</th><th></th></tr></thead>
+    <tbody>
+      {% for r in recipients %}
+      <tr class="{% if r.contact.do_not_contact %}row-muted{% endif %}">
+        <td><strong>{{ r.contact.organization_name }}</strong>{% if r.contact.do_not_contact %}<div class="tiny">DO NOT CONTACT</div>{% endif %}</td>
+        <td>{{ r.contact.email }}</td>
+        <td>{{ r.contact.country|default:'—' }}</td>
+        <td><a href="{% url 'outreach:batch_detail' r.batch.pk %}">{{ r.batch.name }}</a></td>
+        <td><span class="badge badge-{{ r.status }} {% if r.follow_up_due %}badge-followup{% endif %}">{{ r.communication_label }}</span>{% if r.last_error %}<div class="tiny error-text">{{ r.last_error }}</div>{% endif %}</td>
+        <td>
+          <form method="post" action="{% url 'outreach:recipient_update' r.pk %}" class="inline-edit">{% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.get_full_path }}">
+            <select name="hope" onchange="this.form.submit()"><option value="">—</option>{% for value,label in hope_choices %}<option value="{{ value }}" {% if r.hope == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+            <input type="hidden" name="notes" value="{{ r.notes }}">
+          </form>
+        </td>
+        <td>{% if r.sent_at %}{{ r.sent_at|date:'Y-m-d H:i' }}{% else %}—{% endif %}</td>
+        <td>{% if r.replied_at %}{{ r.replied_at|date:'Y-m-d H:i' }}{% else %}—{% endif %}</td>
+        <td>
+          <form method="post" action="{% url 'outreach:recipient_update' r.pk %}" class="notes-form">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><input type="hidden" name="hope" value="{{ r.hope }}"><input name="notes" value="{{ r.notes }}" placeholder="Add note"><button class="mini-save" title="Save note">✓</button></form>
+        </td>
+        <td><details class="row-menu"><summary>•••</summary><div class="menu-pop">
+          <form method="post" action="{% url 'outreach:recipient_suppress' r.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button type="submit">Do not contact</button></form>
+          <form method="post" action="{% url 'outreach:recipient_mark_bounced' r.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button type="submit">Mark bounced</button></form>
+        </div></details></td>
+      </tr>
+      {% empty %}<tr><td colspan="10" class="empty-cell">No matching recipients.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {% if page_obj.paginator.num_pages > 1 %}
+  <div class="pagination">
+    <span>Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }} · {{ page_obj.paginator.count }} rows</span>
+    <div>
+      {% if page_obj.has_previous %}<a class="button button-ghost button-small" href="?{% if querystring %}{{ querystring }}&{% endif %}page={{ page_obj.previous_page_number }}">← Previous</a>{% endif %}
+      {% if page_obj.has_next %}<a class="button button-ghost button-small" href="?{% if querystring %}{{ querystring }}&{% endif %}page={{ page_obj.next_page_number }}">Next →</a>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

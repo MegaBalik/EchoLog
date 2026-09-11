@@ -1,0 +1,11 @@
+[Unit]
+Description=Check EchoLog replies hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+Unit=echolog-replies.service
+
+[Install]
+WantedBy=timers.target
