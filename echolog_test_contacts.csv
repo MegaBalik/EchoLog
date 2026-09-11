@@ -1,0 +1,11 @@
+﻿Name,Email,Country,Company,Website,Domain,Note,Priority,Specialization,CzechRelevant,Region,LeadSource,CompanySize
+Anna Weber,anna.weber@nordlicht.example,Germany,Nordlicht Translations,https://nordlicht.example,nordlicht.example,Medical and technical agency,A,Medical;Technical,Yes,Hamburg,Web research,10-20
+Pieter de Vries,pieter@linguacraft.example,Netherlands,LinguaCraft BV,https://linguacraft.example,linguacraft.example,,B,Legal;Finance,Yes,Utrecht,Association directory,20-50
+,vendors@alpine-language.example,Austria,Alpine Language Services,https://alpine-language.example,alpine-language.example,Generic vendor address,A,Technical,Yes,Vienna,Web research,5-10
+Sofie Janssen,sofie@verba-belgica.example,Belgium,Verba Belgica,https://verba-belgica.example,verba-belgica.example,,C,Marketing,No,Brussels,LinkedIn,10-20
+Martin Novák,martin@praharunning.example,Czechia,Praha Running Club,https://praharunning.example,praharunning.example,Potential RozTRP lead,A,,,Prague,Club directory,50-100 members
+Eva Králová,eva@brnotrail.example,Czechia,Brno Trail Team,https://brnotrail.example,brnotrail.example,,B,,,South Moravia,Web research,20-50 members
+Jan Dvořák,jan@stavbydvorak.example,Czechia,Stavby Dvořák,https://stavbydvorak.example,stavbydvorak.example,Example SME automation lead,B,,,Moravia,Trade fair,20-50
+Katarzyna Nowak,katarzyna@poliglota.example,Poland,Poliglota Sp. z o.o.,https://poliglota.example,poliglota.example,,A,Medical;Life Sciences,Yes,Warsaw,Association directory,20-50
+Lars Mikkelsen,lars@nordicwords.example,Denmark,Nordic Words,https://nordicwords.example,nordicwords.example,,C,Software;Technical,Maybe,Aarhus,Web research,5-10
+Maarja Tamm,maarja@balticwords.example,Estonia,Baltic Words OÜ,https://balticwords.example,balticwords.example,Small specialist agency,B,Technical;IT,Yes,Tallinn,Web research,1-5
