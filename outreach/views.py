@@ -1,25 +1,70 @@
 import csv
+import json
 from datetime import timedelta
+
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db import transaction
-from django.db.models import Count, Q
-from django.http import HttpResponse
 from django.core.paginator import Paginator
+from django.db import transaction
+from django.db.models import Count, Q, TextField
+from django.db.models.functions import Cast
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 
 from .forms import BatchCreateForm, RecipientUpdateForm, TestSendForm
-from .gmail import GmailNotConfigured, build_service, clear_credentials, current_history_id, is_connected, make_flow, profile_email, save_credentials, send_plain_email
+from .gmail import (
+    GmailNotConfigured,
+    build_service,
+    clear_credentials,
+    current_history_id,
+    is_connected,
+    make_flow,
+    profile_email,
+    save_credentials,
+    send_plain_email,
+)
 from .models import Batch, Contact, GmailSyncState, Recipient
 from .services import render_text
+
+
+CONTACT_IMPORT_FIELDS = ('name', 'country', 'company', 'website', 'domain', 'note')
 
 
 def _safe_post_next(request):
     target = request.POST.get('next', '')
     return target if target.startswith('/') and not target.startswith('//') else reverse('outreach:report')
+
+
+def _merge_contact_from_import(contact, item):
+    """Enrich/update an existing contact from an imported row.
+
+    Non-empty core values from the latest import win. Custom metadata is merged;
+    non-empty imported values overwrite the same metadata key while unrelated keys
+    stay untouched.
+    """
+    changed_fields = []
+
+    for field_name in CONTACT_IMPORT_FIELDS:
+        incoming = getattr(item, field_name)
+        if incoming and getattr(contact, field_name) != incoming:
+            setattr(contact, field_name, incoming)
+            changed_fields.append(field_name)
+
+    merged_metadata = dict(contact.metadata or {})
+    metadata_changed = False
+    for key, value in (item.metadata or {}).items():
+        if value and merged_metadata.get(key) != value:
+            merged_metadata[key] = value
+            metadata_changed = True
+    if metadata_changed:
+        contact.metadata = merged_metadata
+        changed_fields.append('metadata')
+
+    if changed_fields:
+        contact.save(update_fields=[*changed_fields, 'updated_at'])
 
 
 @login_required
@@ -58,34 +103,42 @@ def batch_create(request):
                 created = 0
                 existing = 0
                 suppressed = 0
+
                 for position, item in enumerate(form.parsed_contacts, start=1):
                     contact, was_created = Contact.objects.get_or_create(
                         email=item.email,
                         defaults={
-                            'organization_name': item.name,
+                            'name': item.name,
                             'country': item.country,
+                            'company': item.company,
+                            'website': item.website,
+                            'domain': item.domain,
+                            'note': item.note,
+                            'metadata': item.metadata,
                         },
                     )
                     if was_created:
                         created += 1
                     else:
                         existing += 1
-                        changed = False
-                        if item.name and contact.organization_name != item.name:
-                            contact.organization_name = item.name
-                            changed = True
-                        if item.country and not contact.country:
-                            contact.country = item.country
-                            changed = True
-                        if changed:
-                            contact.save()
-                    recipient = Recipient.objects.create(batch=batch, contact=contact, queue_position=position)
+                        _merge_contact_from_import(contact, item)
+
+                    recipient = Recipient.objects.create(
+                        batch=batch,
+                        contact=contact,
+                        queue_position=position,
+                    )
                     if contact.do_not_contact or contact.bounced:
                         recipient.status = Recipient.Status.SKIPPED
                         recipient.last_error = 'Suppressed: do not contact / bounced.'
                         recipient.save(update_fields=['status', 'last_error', 'updated_at'])
                         suppressed += 1
-            messages.success(request, f'Batch created: {len(form.parsed_contacts)} recipients ({created} new contacts, {existing} already known, {suppressed} suppressed).')
+
+            messages.success(
+                request,
+                f'Batch created: {len(form.parsed_contacts)} recipients '
+                f'({created} new contacts, {existing} already known, {suppressed} suppressed).',
+            )
             return redirect('outreach:batch_detail', pk=batch.pk)
     else:
         form = BatchCreateForm(initial={'daily_limit': settings.ECHOLOG_DAILY_LIMIT})
@@ -97,8 +150,13 @@ def batch_detail(request, pk):
     batch = get_object_or_404(Batch, pk=pk)
     recipients = batch.recipients.select_related('contact').all()[:50]
     batch_contact_ids = batch.recipients.values_list('contact_id', flat=True)
-    previous_contacts = (Recipient.objects.filter(contact_id__in=batch_contact_ids, sent_at__isnull=False)
-                         .exclude(batch=batch).values('contact_id').distinct().count())
+    previous_contacts = (
+        Recipient.objects.filter(contact_id__in=batch_contact_ids, sent_at__isnull=False)
+        .exclude(batch=batch)
+        .values('contact_id')
+        .distinct()
+        .count()
+    )
     preview = []
     for recipient in recipients[:3]:
         preview.append({
@@ -184,9 +242,15 @@ def _filtered_recipients(request):
     if hope:
         qs = qs.filter(hope=hope)
     if q:
-        qs = qs.filter(
-            Q(contact__organization_name__icontains=q)
+        qs = qs.annotate(_metadata_text=Cast('contact__metadata', TextField())).filter(
+            Q(contact__name__icontains=q)
+            | Q(contact__company__icontains=q)
             | Q(contact__email__icontains=q)
+            | Q(contact__country__icontains=q)
+            | Q(contact__website__icontains=q)
+            | Q(contact__domain__icontains=q)
+            | Q(contact__note__icontains=q)
+            | Q(_metadata_text__icontains=q)
             | Q(notes__icontains=q)
         )
     if status == 'queued':
@@ -218,7 +282,12 @@ def report(request):
     page_obj = paginator.get_page(request.GET.get('page'))
     params = request.GET.copy()
     params.pop('page', None)
-    countries = Contact.objects.exclude(country='').values_list('country', flat=True).distinct().order_by('country')
+    countries = (
+        Contact.objects.exclude(country='')
+        .values_list('country', flat=True)
+        .distinct()
+        .order_by('country')
+    )
     return render(request, 'outreach/report.html', {
         'recipients': page_obj.object_list,
         'page_obj': page_obj,
@@ -263,22 +332,66 @@ def recipient_mark_bounced(request, pk):
     return redirect(_safe_post_next(request))
 
 
+def _csv_cell(value):
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return value if value is not None else ''
+
+
 @login_required
 def report_export(request):
     qs, _ = _filtered_recipients(request)
-    qs = qs.order_by('batch__name', 'queue_position')
+    rows = list(qs.order_by('batch__name', 'queue_position'))
+    metadata_keys = sorted(
+        {
+            str(key)
+            for recipient in rows
+            for key in (recipient.contact.metadata or {}).keys()
+        },
+        key=str.casefold,
+    )
+
     response = HttpResponse(content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = 'attachment; filename="echolog-report.csv"'
     response.write('\ufeff')
     writer = csv.writer(response)
-    writer.writerow(['Batch', 'Organization', 'Email', 'Country', 'Communication status', 'Hope', 'Sent at', 'Replied at', 'Do not contact', 'Notes'])
-    for r in qs:
+    writer.writerow([
+        'Batch',
+        'Name',
+        'Email',
+        'Country',
+        'Company',
+        'Website',
+        'Domain',
+        'Note',
+        *[f'Meta: {key}' for key in metadata_keys],
+        'Communication status',
+        'Hope',
+        'Sent at',
+        'Replied at',
+        'Do not contact',
+        'Recipient notes',
+    ])
+
+    for r in rows:
+        contact = r.contact
+        metadata = contact.metadata or {}
         writer.writerow([
-            r.batch.name, r.contact.organization_name, r.contact.email, r.contact.country,
-            r.communication_label, r.get_hope_display() if r.hope else '',
+            r.batch.name,
+            contact.name,
+            contact.email,
+            contact.country,
+            contact.company,
+            contact.website,
+            contact.domain,
+            contact.note,
+            *[_csv_cell(metadata.get(key, '')) for key in metadata_keys],
+            r.communication_label,
+            r.get_hope_display() if r.hope else '',
             timezone.localtime(r.sent_at).isoformat() if r.sent_at else '',
             timezone.localtime(r.replied_at).isoformat() if r.replied_at else '',
-            'yes' if r.contact.do_not_contact else 'no', r.notes,
+            'yes' if contact.do_not_contact else 'no',
+            r.notes,
         ])
     return response
 

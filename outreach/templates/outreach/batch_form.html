@@ -17,16 +17,24 @@
   </form>
   <aside class="card side-card">
     <h2>Input format</h2>
-    <p class="muted">The easiest TXT format is one recipient per line:</p>
+    <p class="muted">For a quick list, the original TXT format still works:</p>
     <pre>Name - Email - Country
 Alpha Translations - vendor@alpha.de - Germany
 Beta Language - info@beta.at - Austria</pre>
-    <p>CSV/TSV is also accepted. Recommended headers:</p>
-    <pre>name,email,country</pre>
+
+    <p>For richer datasets use CSV/TSV. EchoLog has only seven fixed contact fields:</p>
+    <pre>Name,Email,Country,Company,Website,Domain,Note</pre>
+    <p class="small muted">Only Email is essential. Header names are case-insensitive; common aliases such as Organization → Company and Notes → Note are accepted.</p>
+
+    <h2>Custom metadata</h2>
+    <p class="muted">Any other column is kept automatically as metadata. No database change is needed for a new project.</p>
+    <pre>Name,Email,Country,Company,Priority,Specialization,CzechRelevant
+Anna Weber,anna@example.com,Germany,Nordlicht Translations,A,Medical;Technical,Yes</pre>
+
     <h2>Variables</h2>
-    <p class="muted">You can use these in subject and body:</p>
-    <div class="token-list"><code>{Name}</code><code>{Organization}</code><code>{ContactName}</code><code>{Email}</code><code>{Country}</code></div>
-    <p class="small muted">Unknown/missing values become empty text. Preview the first messages before starting.</p>
+    <p class="muted">You can use fixed fields in subject/body:</p>
+    <div class="token-list"><code>{Name}</code><code>{Email}</code><code>{Country}</code><code>{Company}</code><code>{Website}</code><code>{Domain}</code><code>{Note}</code></div>
+    <p class="small muted">Backward-compatible <code>{Organization}</code> and <code>{ContactName}</code> also work. Any custom metadata column becomes a token too: <code>Priority</code> → <code>{Priority}</code>.</p>
   </aside>
 </div>
 {% endblock %}

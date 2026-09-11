@@ -40,8 +40,21 @@
 
 <section class="card table-card">
   <div class="section-head"><h2>Queue preview</h2><span class="muted small">first 50</span></div>
-  <div class="table-scroll"><table><thead><tr><th>#</th><th>Organization</th><th>Email</th><th>Country</th><th>Status</th><th>Sent</th></tr></thead><tbody>
-    {% for r in recipients %}<tr><td>{{ r.queue_position }}</td><td>{{ r.contact.organization_name }}</td><td>{{ r.contact.email }}</td><td>{{ r.contact.country|default:'—' }}</td><td><span class="badge badge-{{ r.status }}">{{ r.communication_label }}</span>{% if r.last_error %}<div class="tiny error-text">{{ r.last_error }}</div>{% endif %}</td><td>{% if r.sent_at %}{{ r.sent_at|date:'j M H:i' }}{% else %}—{% endif %}</td></tr>{% endfor %}
+  <div class="table-scroll"><table><thead><tr><th>#</th><th>Name</th><th>Company</th><th>Email</th><th>Country</th><th>Metadata</th><th>Status</th><th>Sent</th></tr></thead><tbody>
+    {% for r in recipients %}
+      <tr>
+        <td>{{ r.queue_position }}</td>
+        <td>{{ r.contact.name|default:'—' }}</td>
+        <td>{{ r.contact.company|default:'—' }}</td>
+        <td>{{ r.contact.email }}</td>
+        <td>{{ r.contact.country|default:'—' }}</td>
+        <td>
+          {% if r.contact.metadata_items %}<div class="metadata-list">{% for key,value in r.contact.metadata_items %}<span class="metadata-item"><b>{{ key }}</b>: {{ value }}</span>{% endfor %}</div>{% else %}—{% endif %}
+        </td>
+        <td><span class="badge badge-{{ r.status }}">{{ r.communication_label }}</span>{% if r.last_error %}<div class="tiny error-text">{{ r.last_error }}</div>{% endif %}</td>
+        <td>{% if r.sent_at %}{{ r.sent_at|date:'j M H:i' }}{% else %}—{% endif %}</td>
+      </tr>
+    {% endfor %}
   </tbody></table></div>
 </section>
 {% endblock %}

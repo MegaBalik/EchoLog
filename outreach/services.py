@@ -1,17 +1,24 @@
 from datetime import time
+
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+
 from .gmail import send_plain_email
 from .models import Batch, Recipient
 
 
 VARIABLES = {
-    '{Name}': lambda c: c.organization_name,
-    '{Organization}': lambda c: c.organization_name,
-    '{ContactName}': lambda c: c.contact_name,
+    '{Name}': lambda c: c.display_name,
     '{Email}': lambda c: c.email,
     '{Country}': lambda c: c.country,
+    '{Company}': lambda c: c.company,
+    '{Website}': lambda c: c.website,
+    '{Domain}': lambda c: c.domain,
+    '{Note}': lambda c: c.note,
+    # Backward-compatible V1 aliases.
+    '{Organization}': lambda c: c.company or c.display_name,
+    '{ContactName}': lambda c: c.name,
 }
 
 
@@ -19,6 +26,11 @@ def render_text(template, contact):
     output = template
     for token, resolver in VARIABLES.items():
         output = output.replace(token, resolver(contact) or '')
+
+    # Any custom imported column can be used as a template token with its original
+    # header, e.g. CSV column "Priority" -> {Priority}.
+    for key, value in (contact.metadata or {}).items():
+        output = output.replace('{' + str(key) + '}', str(value or ''))
     return output
 
 

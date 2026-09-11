@@ -1,0 +1,4 @@
+Name,Email,Country,Company,Website,Priority,Specialization,CzechRelevant
+Anna Weber,anna@example.com,Germany,Nordlicht Translations,https://nordlicht.example,A,Medical;Technical,Yes
+Pieter de Vries,pieter@example.com,Netherlands,LinguaCraft BV,https://linguacraft.example,B,Legal,Yes
+Martin Novak,martin@example.com,Czechia,Praha Running Club,https://prc.example,A,,No

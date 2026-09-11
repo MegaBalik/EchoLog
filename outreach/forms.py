@@ -1,19 +1,54 @@
 import csv
 import io
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from urllib.parse import urlparse
+
 from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
+
 from .models import Batch, Recipient
+
+
+CORE_FIELDS = ('name', 'email', 'country', 'company', 'website', 'domain', 'note')
+
+# Import headers are case-insensitive and forgiving. Only these aliases are treated
+# as fixed EchoLog fields; every other header becomes custom metadata.
+CORE_HEADER_ALIASES = {
+    'name': 'name',
+    'contact': 'name',
+    'contact_name': 'name',
+    'email': 'email',
+    'e_mail': 'email',
+    'email_address': 'email',
+    'country': 'country',
+    'company': 'company',
+    'company_name': 'company',
+    'organization': 'company',
+    'organisation': 'company',
+    'organization_name': 'company',
+    'organisation_name': 'company',
+    'website': 'website',
+    'web': 'website',
+    'url': 'website',
+    'domain': 'domain',
+    'note': 'note',
+    'notes': 'note',
+}
 
 
 @dataclass
 class ParsedContact:
-    name: str
-    email: str
+    name: str = ''
+    email: str = ''
     country: str = ''
+    company: str = ''
+    website: str = ''
+    domain: str = ''
+    note: str = ''
+    metadata: dict = field(default_factory=dict)
 
 
 def _decode_upload(uploaded_file):
@@ -26,6 +61,47 @@ def _decode_upload(uploaded_file):
     raise ValidationError('Could not decode the file. Please use UTF-8 text/CSV.')
 
 
+def _canonical_header(value):
+    value = value.strip().casefold()
+    return re.sub(r'[^a-z0-9]+', '_', value).strip('_')
+
+
+def _domain_from_website(website):
+    website = (website or '').strip()
+    if not website:
+        return ''
+    try:
+        parsed = urlparse(website if '://' in website else f'https://{website}')
+        hostname = parsed.hostname or ''
+        return hostname.removeprefix('www.').lower()
+    except ValueError:
+        return ''
+
+
+def _row_to_contact(raw_header, row):
+    values = {field_name: '' for field_name in CORE_FIELDS}
+    metadata = {}
+
+    for index, header in enumerate(raw_header):
+        header = header.strip()
+        if not header:
+            continue
+        value = row[index].strip() if index < len(row) else ''
+        mapped = CORE_HEADER_ALIASES.get(_canonical_header(header))
+        if mapped:
+            # If aliases happen to repeat, keep the last non-empty value.
+            if value or not values[mapped]:
+                values[mapped] = value
+        elif value:
+            # Preserve the user's original header spelling for display/export/template use.
+            metadata[header] = value
+
+    if not values['domain'] and values['website']:
+        values['domain'] = _domain_from_website(values['website'])
+
+    return ParsedContact(**values, metadata=metadata)
+
+
 def parse_contacts_file(uploaded_file):
     text = _decode_upload(uploaded_file)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -35,7 +111,8 @@ def parse_contacts_file(uploaded_file):
     items = []
     filename = (uploaded_file.name or '').lower()
 
-    # CSV/TSV/semicolon mode. Header names are case-insensitive.
+    # CSV/TSV/semicolon mode. A header is detected when the first row contains an
+    # Email column (case-insensitive). Unknown header columns become metadata.
     if filename.endswith('.csv') or any(sep in lines[0] for sep in ('\t', ';', ',')):
         sample = '\n'.join(lines[:10])
         try:
@@ -46,50 +123,73 @@ def parse_contacts_file(uploaded_file):
         rows = [[cell.strip() for cell in row] for row in reader if any(cell.strip() for cell in row)]
         if not rows:
             raise ValidationError('No rows found.')
-        header = [h.lower().replace(' ', '_') for h in rows[0]]
-        has_header = 'email' in header and any(h in header for h in ('name', 'organization', 'organization_name'))
-        data_rows = rows[1:] if has_header else rows
+
+        raw_header = rows[0]
+        mapped_header = [CORE_HEADER_ALIASES.get(_canonical_header(h)) for h in raw_header]
+        has_header = 'email' in mapped_header
+
         if has_header:
-            name_idx = next(i for i, h in enumerate(header) if h in ('name', 'organization', 'organization_name'))
-            email_idx = header.index('email')
-            country_idx = header.index('country') if 'country' in header else None
-            for row in data_rows:
-                try:
-                    items.append(ParsedContact(row[name_idx], row[email_idx], row[country_idx] if country_idx is not None and country_idx < len(row) else ''))
-                except IndexError:
-                    raise ValidationError(f'Invalid row: {row}')
+            for row in rows[1:]:
+                items.append(_row_to_contact(raw_header, row))
         else:
-            for row in data_rows:
+            # Headerless CSV/TSV keeps the original V1 positional format.
+            for row in rows:
                 if len(row) < 2:
                     raise ValidationError(f'Expected at least Name and Email: {row}')
-                items.append(ParsedContact(row[0], row[1], row[2] if len(row) > 2 else ''))
+                items.append(ParsedContact(
+                    name=row[0].strip(),
+                    email=row[1].strip(),
+                    country=row[2].strip() if len(row) > 2 else '',
+                ))
     else:
-        # TXT mode: Name - Email - Country (spaces around the hyphen are the delimiter).
+        # Legacy TXT mode: Name - Email - Country (spaces around the hyphen are the delimiter).
         for number, line in enumerate(lines, start=1):
             parts = re.split(r'\s+-\s+', line, maxsplit=2)
             if len(parts) < 2:
                 raise ValidationError(f'Line {number}: expected “Name - Email - Country”.')
-            items.append(ParsedContact(parts[0].strip(), parts[1].strip(), parts[2].strip() if len(parts) > 2 else ''))
+            items.append(ParsedContact(
+                name=parts[0].strip(),
+                email=parts[1].strip(),
+                country=parts[2].strip() if len(parts) > 2 else '',
+            ))
 
     normalized = []
     seen = set()
     for number, item in enumerate(items, start=1):
-        if not item.name:
-            raise ValidationError(f'Row {number}: Name is empty.')
         email = item.email.strip().lower()
         try:
             validate_email(email)
         except ValidationError:
             raise ValidationError(f'Row {number}: invalid email “{item.email}”.')
+
         if email in seen:
             continue
         seen.add(email)
-        normalized.append(ParsedContact(item.name.strip(), email, item.country.strip()))
+
+        item.email = email
+        item.name = item.name.strip()
+        item.country = item.country.strip()
+        item.company = item.company.strip()
+        item.website = item.website.strip()
+        item.domain = item.domain.strip().lower()
+        item.note = item.note.strip()
+        item.metadata = {
+            str(key).strip(): str(value).strip()
+            for key, value in (item.metadata or {}).items()
+            if str(key).strip() and str(value).strip()
+        }
+        normalized.append(item)
+
     return normalized
 
 
 class BatchCreateForm(forms.ModelForm):
-    contacts_file = forms.FileField(help_text='TXT: Name - Email - Country, or CSV/TSV with name,email,country.')
+    contacts_file = forms.FileField(
+        help_text=(
+            'TXT: Name - Email - Country, or CSV/TSV. Known columns are Name, Email, '
+            'Country, Company, Website, Domain and Note; every other column is saved as metadata.'
+        )
+    )
 
     class Meta:
         model = Batch

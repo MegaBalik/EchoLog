@@ -1,0 +1,428 @@
+diff --git a/outreach/admin.py b/outreach/admin.py
+index 25dc08b..ac20bc4 100644
+--- a/outreach/admin.py
++++ b/outreach/admin.py
+@@ -1,12 +1,20 @@
+ from django.contrib import admin
+-from .models import Batch, Contact, GmailSyncState, Recipient
++from .models import Batch, Contact, GmailSyncState, Organization, Recipient
++
++
++@admin.register(Organization)
++class OrganizationAdmin(admin.ModelAdmin):
++    list_display = ('name', 'country', 'city', 'segment', 'website')
++    search_fields = ('name', 'country', 'city', 'segment', 'website')
++    list_filter = ('country', 'segment')
+ 
+ 
+ @admin.register(Contact)
+ class ContactAdmin(admin.ModelAdmin):
+-    list_display = ('organization_name', 'email', 'country', 'segment', 'do_not_contact', 'bounced')
+-    search_fields = ('organization_name', 'email', 'country', 'segment')
+-    list_filter = ('country', 'segment', 'do_not_contact', 'bounced')
++    list_display = ('organization', 'contact_name', 'email', 'role', 'do_not_contact', 'bounced')
++    search_fields = ('organization__name', 'contact_name', 'email', 'organization__country', 'organization__segment')
++    list_filter = ('organization__country', 'organization__segment', 'do_not_contact', 'bounced')
++    raw_id_fields = ('organization',)
+ 
+ 
+ @admin.register(Batch)
+@@ -19,8 +27,9 @@ class BatchAdmin(admin.ModelAdmin):
+ @admin.register(Recipient)
+ class RecipientAdmin(admin.ModelAdmin):
+     list_display = ('contact', 'batch', 'status', 'hope', 'sent_at', 'replied_at')
+-    list_filter = ('status', 'hope', 'batch', 'contact__country')
+-    search_fields = ('contact__organization_name', 'contact__email', 'batch__name')
++    list_filter = ('status', 'hope', 'batch', 'contact__organization__country')
++    search_fields = ('contact__organization__name', 'contact__email', 'batch__name')
+     raw_id_fields = ('contact', 'batch')
+ 
++
+ admin.site.register(GmailSyncState)
+diff --git a/outreach/migrations/0002_organization_contact_refactor.py b/outreach/migrations/0002_organization_contact_refactor.py
+new file mode 100644
+index 0000000..ce4ec2c
+--- /dev/null
++++ b/outreach/migrations/0002_organization_contact_refactor.py
+@@ -0,0 +1,130 @@
++from django.db import migrations, models
++import django.db.models.deletion
++
++
++def forwards(apps, schema_editor):
++    Organization = apps.get_model('outreach', 'Organization')
++    Contact = apps.get_model('outreach', 'Contact')
++
++    for contact in Contact.objects.all().iterator():
++        name = (contact.organization_name or '').strip() or contact.email
++        country = (contact.country or '').strip()
++
++        organization = Organization.objects.filter(
++            name=name,
++            country=country,
++        ).first()
++
++        if organization is None:
++            organization = Organization.objects.create(
++                name=name,
++                country=country,
++                segment=(contact.segment or '').strip(),
++                website=(contact.website or '').strip(),
++            )
++        else:
++            changed = []
++            if not organization.segment and contact.segment:
++                organization.segment = contact.segment
++                changed.append('segment')
++            if not organization.website and contact.website:
++                organization.website = contact.website
++                changed.append('website')
++            if changed:
++                organization.save(update_fields=changed + ['updated_at'])
++
++        contact.organization_id = organization.id
++        contact.save(update_fields=['organization'])
++
++
++def backwards(apps, schema_editor):
++    # The old columns are recreated before this reverse function runs.
++    Contact = apps.get_model('outreach', 'Contact')
++    for contact in Contact.objects.select_related('organization').all().iterator():
++        organization = contact.organization
++        contact.organization_name = organization.name
++        contact.country = organization.country
++        contact.segment = organization.segment
++        contact.website = organization.website
++        contact.save(update_fields=['organization_name', 'country', 'segment', 'website'])
++
++
++class Migration(migrations.Migration):
++
++    dependencies = [
++        ('outreach', '0001_initial'),
++    ]
++
++    operations = [
++        migrations.CreateModel(
++            name='Organization',
++            fields=[
++                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++                ('name', models.CharField(max_length=240)),
++                ('website', models.URLField(blank=True)),
++                ('country', models.CharField(blank=True, max_length=120)),
++                ('city', models.CharField(blank=True, max_length=160)),
++                ('segment', models.CharField(blank=True, max_length=120)),
++                ('source', models.CharField(blank=True, max_length=240)),
++                ('notes', models.TextField(blank=True)),
++                ('created_at', models.DateTimeField(auto_now_add=True)),
++                ('updated_at', models.DateTimeField(auto_now=True)),
++            ],
++            options={
++                'ordering': ['name', 'country'],
++            },
++        ),
++        migrations.AddIndex(
++            model_name='organization',
++            index=models.Index(fields=['country'], name='outreach_org_country_idx'),
++        ),
++        migrations.AddIndex(
++            model_name='organization',
++            index=models.Index(fields=['segment'], name='outreach_org_segment_idx'),
++        ),
++        migrations.AddField(
++            model_name='contact',
++            name='organization',
++            field=models.ForeignKey(
++                null=True,
++                on_delete=django.db.models.deletion.PROTECT,
++                related_name='contacts',
++                to='outreach.organization',
++            ),
++        ),
++        migrations.AddField(
++            model_name='contact',
++            name='role',
++            field=models.CharField(blank=True, max_length=160),
++        ),
++        migrations.RunPython(forwards, backwards),
++        migrations.AlterField(
++            model_name='contact',
++            name='organization',
++            field=models.ForeignKey(
++                on_delete=django.db.models.deletion.PROTECT,
++                related_name='contacts',
++                to='outreach.organization',
++            ),
++        ),
++        migrations.RemoveField(
++            model_name='contact',
++            name='organization_name',
++        ),
++        migrations.RemoveField(
++            model_name='contact',
++            name='country',
++        ),
++        migrations.RemoveField(
++            model_name='contact',
++            name='segment',
++        ),
++        migrations.RemoveField(
++            model_name='contact',
++            name='website',
++        ),
++        migrations.AlterModelOptions(
++            name='contact',
++            options={'ordering': ['email']},
++        ),
++    ]
+diff --git a/outreach/models.py b/outreach/models.py
+index 0c6092b..46b7de7 100644
+--- a/outreach/models.py
++++ b/outreach/models.py
+@@ -4,13 +4,39 @@ from django.db import models
+ from django.utils import timezone
+ 
+ 
++class Organization(models.Model):
++    """A company, club, school, agency, municipality, or any other outreach target."""
++
++    name = models.CharField(max_length=240)
++    website = models.URLField(blank=True)
++    country = models.CharField(max_length=120, blank=True)
++    city = models.CharField(max_length=160, blank=True)
++    segment = models.CharField(max_length=120, blank=True)
++    source = models.CharField(max_length=240, blank=True)
++    notes = models.TextField(blank=True)
++    created_at = models.DateTimeField(auto_now_add=True)
++    updated_at = models.DateTimeField(auto_now=True)
++
++    class Meta:
++        ordering = ['name', 'country']
++        indexes = [
++            models.Index(fields=['country'], name='outreach_org_country_idx'),
++            models.Index(fields=['segment'], name='outreach_org_segment_idx'),
++        ]
++
++    def __str__(self):
++        return self.name
++
++
+ class Contact(models.Model):
+-    organization_name = models.CharField(max_length=240)
++    organization = models.ForeignKey(
++        Organization,
++        on_delete=models.PROTECT,
++        related_name='contacts',
++    )
+     contact_name = models.CharField(max_length=240, blank=True)
++    role = models.CharField(max_length=160, blank=True)
+     email = models.EmailField(unique=True)
+-    country = models.CharField(max_length=120, blank=True)
+-    segment = models.CharField(max_length=120, blank=True)
+-    website = models.URLField(blank=True)
+     notes = models.TextField(blank=True)
+     do_not_contact = models.BooleanField(default=False)
+     bounced = models.BooleanField(default=False)
+@@ -18,10 +44,28 @@ class Contact(models.Model):
+     updated_at = models.DateTimeField(auto_now=True)
+ 
+     class Meta:
+-        ordering = ['organization_name', 'email']
++        ordering = ['email']
+ 
+     def __str__(self):
+-        return f'{self.organization_name} <{self.email}>'
++        return f'{self.organization.name} <{self.email}>'
++
++    # Compatibility properties keep the existing templates and mail-token renderer
++    # working while the normalized model is used underneath.
++    @property
++    def organization_name(self):
++        return self.organization.name
++
++    @property
++    def country(self):
++        return self.organization.country
++
++    @property
++    def segment(self):
++        return self.organization.segment
++
++    @property
++    def website(self):
++        return self.organization.website
+ 
+ 
+ class Batch(models.Model):
+diff --git a/outreach/tests.py b/outreach/tests.py
+index 9625b1e..4edd55a 100644
+--- a/outreach/tests.py
++++ b/outreach/tests.py
+@@ -11,7 +11,7 @@ from django.urls import reverse
+ from django.utils import timezone
+ 
+ from .forms import parse_contacts_file
+-from .models import Batch, Contact, Recipient
++from .models import Batch, Contact, Organization, Recipient
+ from .services import render_text, send_next
+ 
+ 
+@@ -45,7 +45,8 @@ class ImportParserTests(TestCase):
+ class ModelAndTemplateTests(TestCase):
+     def setUp(self):
+         self.batch = Batch.objects.create(name='DE', subject='Hello {Name}', body='Country: {Country}')
+-        self.contact = Contact.objects.create(organization_name='Alpha', email='a@example.com', country='Germany')
++        self.organization = Organization.objects.create(name='Alpha', country='Germany')
++        self.contact = Contact.objects.create(organization=self.organization, email='a@example.com')
+         self.recipient = Recipient.objects.create(batch=self.batch, contact=self.contact)
+ 
+     def test_render_variables(self):
+@@ -78,7 +79,8 @@ class QueueTests(TestCase):
+     def test_sends_one_message(self, mocked_send):
+         mocked_send.return_value = {'id': 'm1', 'threadId': 't1', 'rfc_message_id': '<x@example.com>'}
+         batch = Batch.objects.create(name='DE', subject='Hi {Name}', body='Hello', status=Batch.Status.RUNNING, started_at=timezone.now())
+-        contact = Contact.objects.create(organization_name='Alpha', email='a@example.com')
++        organization = Organization.objects.create(name='Alpha')
++        contact = Contact.objects.create(organization=organization, email='a@example.com')
+         recipient = Recipient.objects.create(batch=batch, contact=contact, queue_position=1)
+         result = send_next(now=self.aware(2026, 9, 10, 10, 0))
+         self.assertTrue(result['sent'])
+@@ -92,12 +94,14 @@ class QueueTests(TestCase):
+     def test_prior_contact_is_skipped_without_consuming_timer_slot(self, mocked_send):
+         mocked_send.return_value = {'id': 'm2', 'threadId': 't2', 'rfc_message_id': '<y@example.com>'}
+         old = Batch.objects.create(name='Old', subject='x', body='x', status=Batch.Status.COMPLETED)
+-        c1 = Contact.objects.create(organization_name='Known', email='known@example.com')
++        o1 = Organization.objects.create(name='Known')
++        c1 = Contact.objects.create(organization=o1, email='known@example.com')
+         Recipient.objects.create(batch=old, contact=c1, status=Recipient.Status.SENT, sent_at=self.aware(2026, 9, 1, 10))
+ 
+         batch = Batch.objects.create(name='New', subject='Hi', body='Body', status=Batch.Status.RUNNING, started_at=timezone.now())
+         r1 = Recipient.objects.create(batch=batch, contact=c1, queue_position=1)
+-        c2 = Contact.objects.create(organization_name='Fresh', email='fresh@example.com')
++        o2 = Organization.objects.create(name='Fresh')
++        c2 = Contact.objects.create(organization=o2, email='fresh@example.com')
+         r2 = Recipient.objects.create(batch=batch, contact=c2, queue_position=2)
+ 
+         result = send_next(now=self.aware(2026, 9, 10, 10))
+@@ -111,11 +115,13 @@ class QueueTests(TestCase):
+     @patch('outreach.services.send_plain_email')
+     def test_global_daily_limit(self, mocked_send):
+         first_batch = Batch.objects.create(name='First', subject='x', body='x')
+-        first_contact = Contact.objects.create(organization_name='One', email='one@example.com')
++        first_org = Organization.objects.create(name='One')
++        first_contact = Contact.objects.create(organization=first_org, email='one@example.com')
+         Recipient.objects.create(batch=first_batch, contact=first_contact, status=Recipient.Status.SENT, sent_at=self.aware(2026, 9, 10, 9))
+ 
+         batch = Batch.objects.create(name='Second', subject='x', body='x', status=Batch.Status.RUNNING, started_at=timezone.now())
+-        contact = Contact.objects.create(organization_name='Two', email='two@example.com')
++        organization = Organization.objects.create(name='Two')
++        contact = Contact.objects.create(organization=organization, email='two@example.com')
+         Recipient.objects.create(batch=batch, contact=contact)
+         result = send_next(now=self.aware(2026, 9, 10, 10))
+         self.assertFalse(result['sent'])
+@@ -154,3 +160,4 @@ class ViewTests(TestCase):
+         self.assertEqual(response.status_code, 302)
+         batch = Batch.objects.get(name='CZ running clubs')
+         self.assertEqual(batch.recipients.count(), 2)
++        self.assertEqual(Organization.objects.filter(name__in=['Club One', 'Club Two']).count(), 2)
+diff --git a/outreach/views.py b/outreach/views.py
+index 36db7b7..1c3dcae 100644
+--- a/outreach/views.py
++++ b/outreach/views.py
+@@ -13,7 +13,7 @@ from django.utils import timezone
+ 
+ from .forms import BatchCreateForm, RecipientUpdateForm, TestSendForm
+ from .gmail import GmailNotConfigured, build_service, clear_credentials, current_history_id, is_connected, make_flow, profile_email, save_credentials, send_plain_email
+-from .models import Batch, Contact, GmailSyncState, Recipient
++from .models import Batch, Contact, GmailSyncState, Organization, Recipient
+ from .services import render_text
+ 
+ 
+@@ -59,26 +59,23 @@ def batch_create(request):
+                 existing = 0
+                 suppressed = 0
+                 for position, item in enumerate(form.parsed_contacts, start=1):
++                    organization, _ = Organization.objects.get_or_create(
++                        name=item.name,
++                        country=item.country,
++                    )
+                     contact, was_created = Contact.objects.get_or_create(
+                         email=item.email,
+-                        defaults={
+-                            'organization_name': item.name,
+-                            'country': item.country,
+-                        },
++                        defaults={'organization': organization},
+                     )
+                     if was_created:
+                         created += 1
+                     else:
+                         existing += 1
+-                        changed = False
+-                        if item.name and contact.organization_name != item.name:
+-                            contact.organization_name = item.name
+-                            changed = True
+-                        if item.country and not contact.country:
+-                            contact.country = item.country
+-                            changed = True
+-                        if changed:
+-                            contact.save()
++                        if contact.organization_id != organization.id:
++                            # Keep the old V1 behavior: the newest import wins when
++                            # an already-known email is associated with another organization.
++                            contact.organization = organization
++                            contact.save(update_fields=['organization', 'updated_at'])
+                     recipient = Recipient.objects.create(batch=batch, contact=contact, queue_position=position)
+                     if contact.do_not_contact or contact.bounced:
+                         recipient.status = Recipient.Status.SKIPPED
+@@ -95,7 +92,7 @@ def batch_create(request):
+ @login_required
+ def batch_detail(request, pk):
+     batch = get_object_or_404(Batch, pk=pk)
+-    recipients = batch.recipients.select_related('contact').all()[:50]
++    recipients = batch.recipients.select_related('contact', 'contact__organization').all()[:50]
+     batch_contact_ids = batch.recipients.values_list('contact_id', flat=True)
+     previous_contacts = (Recipient.objects.filter(contact_id__in=batch_contact_ids, sent_at__isnull=False)
+                          .exclude(batch=batch).values('contact_id').distinct().count())
+@@ -155,7 +152,7 @@ def batch_test_send(request, pk):
+     batch = get_object_or_404(Batch, pk=pk)
+     form = TestSendForm(request.POST, user=request.user)
+     if request.method == 'POST' and form.is_valid():
+-        first = batch.recipients.select_related('contact').first()
++        first = batch.recipients.select_related('contact', 'contact__organization').first()
+         if not first:
+             messages.error(request, 'The batch has no recipients.')
+         else:
+@@ -170,7 +167,7 @@ def batch_test_send(request, pk):
+ 
+ 
+ def _filtered_recipients(request):
+-    qs = Recipient.objects.select_related('contact', 'batch').order_by('-sent_at', '-id')
++    qs = Recipient.objects.select_related('contact', 'contact__organization', 'batch').order_by('-sent_at', '-id')
+     batch_id = request.GET.get('batch', '')
+     country = request.GET.get('country', '')
+     status = request.GET.get('status', '')
+@@ -180,12 +177,12 @@ def _filtered_recipients(request):
+     if batch_id:
+         qs = qs.filter(batch_id=batch_id)
+     if country:
+-        qs = qs.filter(contact__country=country)
++        qs = qs.filter(contact__organization__country=country)
+     if hope:
+         qs = qs.filter(hope=hope)
+     if q:
+         qs = qs.filter(
+-            Q(contact__organization_name__icontains=q)
++            Q(contact__organization__name__icontains=q)
+             | Q(contact__email__icontains=q)
+             | Q(notes__icontains=q)
+         )
+@@ -218,7 +215,7 @@ def report(request):
+     page_obj = paginator.get_page(request.GET.get('page'))
+     params = request.GET.copy()
+     params.pop('page', None)
+-    countries = Contact.objects.exclude(country='').values_list('country', flat=True).distinct().order_by('country')
++    countries = Organization.objects.exclude(country='').values_list('country', flat=True).distinct().order_by('country')
+     return render(request, 'outreach/report.html', {
+         'recipients': page_obj.object_list,
+         'page_obj': page_obj,

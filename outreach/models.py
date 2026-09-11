@@ -5,23 +5,39 @@ from django.utils import timezone
 
 
 class Contact(models.Model):
-    organization_name = models.CharField(max_length=240)
-    contact_name = models.CharField(max_length=240, blank=True)
+    """A reusable outreach contact.
+
+    Keep the schema deliberately small and generic. Project/campaign-specific values
+    belong in ``metadata`` so EchoLog can ingest different datasets without model
+    changes (translation agencies, sports clubs, schools, SMEs, ...).
+    """
+
+    name = models.CharField(max_length=240, blank=True)
     email = models.EmailField(unique=True)
     country = models.CharField(max_length=120, blank=True)
-    segment = models.CharField(max_length=120, blank=True)
+    company = models.CharField(max_length=240, blank=True)
     website = models.URLField(blank=True)
-    notes = models.TextField(blank=True)
+    domain = models.CharField(max_length=255, blank=True)
+    note = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
     do_not_contact = models.BooleanField(default=False)
     bounced = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['organization_name', 'email']
+        ordering = ['company', 'name', 'email']
 
     def __str__(self):
-        return f'{self.organization_name} <{self.email}>'
+        return f'{self.display_name} <{self.email}>'
+
+    @property
+    def display_name(self):
+        return self.name or self.company or self.email
+
+    @property
+    def metadata_items(self):
+        return sorted((self.metadata or {}).items(), key=lambda item: item[0].casefold())
 
 
 class Batch(models.Model):

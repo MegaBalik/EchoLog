@@ -9,9 +9,11 @@ It is generic: translation agencies, sports clubs, schools, SMEs, or any other l
 ## V1 features
 
 - Login-protected Django UI
-- TXT/CSV/TSV import (`Name - Email - Country` is the simplest format)
+- TXT/CSV/TSV import (`Name - Email - Country` remains the simplest legacy format)
+- Generic contact core: `Name, Email, Country, Company, Website, Domain, Note`
+- Any additional CSV/TSV columns are stored automatically in contact JSON metadata
 - Batch-specific frozen Subject + Body
-- Variables: `{Name}`, `{Organization}`, `{ContactName}`, `{Email}`, `{Country}`
+- Variables for all core fields plus custom metadata headers (e.g. `{Priority}`)
 - Collapsible batch queue/dashboard
 - Start / Pause; only one batch runs at a time
 - Global daily cap (default 30) + per-batch ceiling
@@ -54,12 +56,21 @@ Without PostgreSQL environment variables EchoLog uses local SQLite automatically
 
 You can create/import a batch, inspect previews, use reports, and test UI/database behavior before Gmail is connected. Start Batch is intentionally blocked until Gmail OAuth is connected.
 
-Sample file:
+Simple TXT sample:
 
 ```text
 Alpha GmbH - vendor@alpha.de - Germany
 Beta Language AG - info@beta.at - Austria
 ```
+
+For richer data, use CSV/TSV with any subset of the fixed fields:
+
+```csv
+Name,Email,Country,Company,Website,Priority,Specialization
+Anna Weber,anna@example.com,Germany,Nordlicht Translations,https://nordlicht.example,A,Medical;Technical
+```
+
+`Priority` and `Specialization` are not database columns; EchoLog stores them in `Contact.metadata`. Any other unknown header works the same way. If the same email is imported later, non-empty core fields enrich/update the existing contact and metadata keys are merged.
 
 ## 3. Gmail API / OAuth
 
