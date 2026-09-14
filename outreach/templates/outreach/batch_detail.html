@@ -7,6 +7,7 @@
     <span class="pill status-pill-{{ batch.status }}">{{ batch.get_status_display }}</span>
     {% if batch.status == 'running' %}<form method="post" action="{% url 'outreach:batch_pause' batch.pk %}">{% csrf_token %}<button class="button button-warn" type="submit">Pause batch</button></form>
     {% elif batch.status != 'completed' %}<form method="post" action="{% url 'outreach:batch_start' batch.pk %}">{% csrf_token %}<button class="button button-primary" type="submit">Start batch</button></form>{% endif %}
+    <form method="post" action="{% url 'outreach:batch_delete' batch.pk %}" onsubmit="return confirm('{% if batch.sent_count %}Remove all unsent recipients? Already sent history will be kept.{% else %}Delete this batch and all its queued recipients?{% endif %}');">{% csrf_token %}<button class="button button-ghost" type="submit">Delete batch</button></form>
   </div>
 </div>
 
@@ -21,9 +22,21 @@
 
 <div class="two-col">
   <section class="card form-card">
-    <div class="section-head"><h2>Message frozen with batch</h2></div>
-    <div class="field"><label>Subject</label><div class="readbox">{{ batch.subject }}</div></div>
-    <div class="field"><label>Body</label><pre class="mail-body">{{ batch.body }}</pre></div>
+    <div class="section-head">
+      <h2>Message</h2>
+      {% if batch.message_editable %}<span class="muted small">Editable while Draft or Paused</span>{% else %}<span class="muted small">Locked while {{ batch.get_status_display }}</span>{% endif %}
+    </div>
+    {% if batch.message_editable %}
+      <form method="post" action="{% url 'outreach:batch_edit_message' batch.pk %}" class="stack">
+        {% csrf_token %}
+        <div class="field"><label for="{{ message_form.subject.id_for_label }}">Subject</label>{{ message_form.subject }}{% for error in message_form.subject.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>
+        <div class="field"><label for="{{ message_form.body.id_for_label }}">Body</label>{{ message_form.body }}{% for error in message_form.body.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>
+        <div class="row-actions"><button class="button button-primary" type="submit">Save message</button></div>
+      </form>
+    {% else %}
+      <div class="field"><label>Subject</label><div class="readbox">{{ batch.subject }}</div></div>
+      <div class="field"><label>Body</label><pre class="mail-body">{{ batch.body }}</pre></div>
+    {% endif %}
     <form method="post" action="{% url 'outreach:batch_test_send' batch.pk %}" class="test-send">{% csrf_token %}{{ test_form.email.label_tag }} {{ test_form.email }} <button class="button button-ghost" type="submit">Send test</button></form>
   </section>
 

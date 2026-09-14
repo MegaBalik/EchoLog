@@ -14,7 +14,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 
-from .forms import BatchCreateForm, RecipientUpdateForm, TestSendForm
+from .forms import BatchCreateForm, BatchMessageForm, RecipientUpdateForm, TestSendForm
 from .gmail import (
     GmailNotConfigured,
     build_service,
@@ -165,11 +165,13 @@ def batch_detail(request, pk):
             'body': render_text(batch.body, recipient.contact),
         })
     test_form = TestSendForm(user=request.user)
+    message_form = BatchMessageForm(instance=batch)
     return render(request, 'outreach/batch_detail.html', {
         'batch': batch,
         'recipients': recipients,
         'preview': preview,
         'test_form': test_form,
+        'message_form': message_form,
         'previous_contacts': previous_contacts,
         'gmail_connected': is_connected(),
         'default_followup_days': settings.ECHOLOG_DEFAULT_FOLLOWUP_DAYS,
@@ -206,6 +208,58 @@ def batch_pause(request, pk):
             batch.save(update_fields=['status'])
             messages.success(request, 'Batch paused.')
     return redirect('outreach:batch_detail', pk=pk)
+
+
+@login_required
+@transaction.atomic
+def batch_edit_message(request, pk):
+    if request.method != 'POST':
+        return redirect('outreach:batch_detail', pk=pk)
+
+    batch = get_object_or_404(Batch.objects.select_for_update(), pk=pk)
+    if not batch.message_editable:
+        messages.error(request, 'The message can only be edited while the batch is Draft or Paused.')
+        return redirect('outreach:batch_detail', pk=pk)
+
+    form = BatchMessageForm(request.POST, instance=batch)
+    if form.is_valid():
+        form.save()
+        messages.success(request, 'Subject and body updated. Unsent recipients will use the new message.')
+    else:
+        messages.error(request, 'Could not save the message. Check subject and body.')
+    return redirect('outreach:batch_detail', pk=pk)
+
+
+@login_required
+@transaction.atomic
+def batch_delete(request, pk):
+    if request.method != 'POST':
+        return redirect('outreach:batch_detail', pk=pk)
+
+    batch = get_object_or_404(Batch.objects.select_for_update(), pk=pk)
+    sent_qs = batch.recipients.filter(sent_at__isnull=False)
+
+    if not sent_qs.exists():
+        name = batch.name
+        batch.delete()
+        messages.success(request, f'Batch “{name}” deleted.')
+        return redirect('outreach:dashboard')
+
+    unsent_qs = batch.recipients.filter(sent_at__isnull=True)
+    unsent_count = unsent_qs.count()
+    unsent_qs.delete()
+
+    batch.status = Batch.Status.COMPLETED
+    if not batch.completed_at:
+        batch.completed_at = timezone.now()
+    batch.save(update_fields=['status', 'completed_at'])
+
+    messages.success(
+        request,
+        f'Batch cleaned up: {unsent_count} unsent recipient'
+        f'{"s" if unsent_count != 1 else ""} removed; sent history was kept.',
+    )
+    return redirect('outreach:batch_detail', pk=batch.pk)
 
 
 @login_required

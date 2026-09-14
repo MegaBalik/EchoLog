@@ -207,6 +207,16 @@ class BatchCreateForm(forms.ModelForm):
         return uploaded
 
 
+class BatchMessageForm(forms.ModelForm):
+    class Meta:
+        model = Batch
+        fields = ['subject', 'body']
+        widgets = {
+            'subject': forms.TextInput(attrs={'placeholder': 'A short subject'}),
+            'body': forms.Textarea(attrs={'rows': 14, 'placeholder': 'Hello {Name},\n\n...'}),
+        }
+
+
 class TestSendForm(forms.Form):
     email = forms.EmailField(label='Send test to')
 

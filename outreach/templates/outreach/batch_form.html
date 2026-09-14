@@ -1,7 +1,7 @@
 {% extends 'outreach/base.html' %}
 {% block title %}New batch · EchoLog{% endblock %}
 {% block content %}
-<div class="page-head"><div><div class="eyebrow">New outreach</div><h1>Create batch</h1><p class="muted">Upload recipients and freeze the exact subject/body used for this campaign.</p></div></div>
+<div class="page-head"><div><div class="eyebrow">New outreach</div><h1>Create batch</h1><p class="muted">Upload recipients and prepare the message. Subject/body stay editable until the batch is running.</p></div></div>
 <div class="two-col">
   <form method="post" enctype="multipart/form-data" class="card form-card stack">{% csrf_token %}
     {% if form.non_field_errors %}<div class="message error">{{ form.non_field_errors }}</div>{% endif %}

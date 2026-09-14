@@ -88,6 +88,10 @@ class Batch(models.Model):
         total = self.total_count
         return int((self.sent_count / total) * 100) if total else 0
 
+    @property
+    def message_editable(self):
+        return self.status in {self.Status.DRAFT, self.Status.PAUSED}
+
 
 class Recipient(models.Model):
     class Status(models.TextChoices):

@@ -284,3 +284,95 @@ class ViewTests(TestCase):
         self.assertIn('Meta: Specialization', rows[0])
         self.assertIn('A', rows[1])
         self.assertIn('Medical', rows[1])
+
+
+class BatchLifecycleViewTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            'batch-user', email='batch@example.com', password='test-pass-12345'
+        )
+        self.client.force_login(self.user)
+
+    def _recipient(self, batch, email, *, sent=False):
+        contact = Contact.objects.create(name=email.split('@')[0], email=email)
+        recipient = Recipient.objects.create(batch=batch, contact=contact)
+        if sent:
+            recipient.sent_at = timezone.now()
+            recipient.status = Recipient.Status.SENT
+            recipient.save(update_fields=['sent_at', 'status', 'updated_at'])
+        return recipient
+
+    def test_message_editable_in_draft(self):
+        batch = Batch.objects.create(name='Draft', subject='Old', body='Old body')
+        response = self.client.post(reverse('outreach:batch_edit_message', args=[batch.pk]), {
+            'subject': 'New subject',
+            'body': 'New body',
+        })
+        self.assertEqual(response.status_code, 302)
+        batch.refresh_from_db()
+        self.assertEqual(batch.subject, 'New subject')
+        self.assertEqual(batch.body, 'New body')
+
+    def test_message_locked_while_running(self):
+        batch = Batch.objects.create(
+            name='Running', subject='Old', body='Old body', status=Batch.Status.RUNNING
+        )
+        response = self.client.post(reverse('outreach:batch_edit_message', args=[batch.pk]), {
+            'subject': 'New subject',
+            'body': 'New body',
+        })
+        self.assertEqual(response.status_code, 302)
+        batch.refresh_from_db()
+        self.assertEqual(batch.subject, 'Old')
+        self.assertEqual(batch.body, 'Old body')
+
+    def test_message_editable_after_pause(self):
+        batch = Batch.objects.create(
+            name='Paused', subject='Old', body='Old body', status=Batch.Status.PAUSED
+        )
+        response = self.client.post(reverse('outreach:batch_edit_message', args=[batch.pk]), {
+            'subject': 'Paused subject',
+            'body': 'Paused body',
+        })
+        self.assertEqual(response.status_code, 302)
+        batch.refresh_from_db()
+        self.assertEqual(batch.subject, 'Paused subject')
+        self.assertEqual(batch.body, 'Paused body')
+
+    def test_delete_unsent_batch_removes_batch_and_recipients(self):
+        batch = Batch.objects.create(name='Unsent', subject='x', body='x')
+        recipient = self._recipient(batch, 'queued@example.com')
+        response = self.client.post(reverse('outreach:batch_delete', args=[batch.pk]))
+        self.assertRedirects(response, reverse('outreach:dashboard'))
+        self.assertFalse(Batch.objects.filter(pk=batch.pk).exists())
+        self.assertFalse(Recipient.objects.filter(pk=recipient.pk).exists())
+        self.assertTrue(Contact.objects.filter(email='queued@example.com').exists())
+
+    def test_delete_partially_sent_batch_keeps_only_sent_history(self):
+        batch = Batch.objects.create(
+            name='Partial', subject='x', body='x', status=Batch.Status.PAUSED
+        )
+        sent = self._recipient(batch, 'sent@example.com', sent=True)
+        queued = self._recipient(batch, 'queued2@example.com')
+        response = self.client.post(reverse('outreach:batch_delete', args=[batch.pk]))
+        self.assertRedirects(response, reverse('outreach:batch_detail', args=[batch.pk]))
+        batch.refresh_from_db()
+        self.assertEqual(batch.status, Batch.Status.COMPLETED)
+        self.assertIsNotNone(batch.completed_at)
+        self.assertTrue(Recipient.objects.filter(pk=sent.pk).exists())
+        self.assertFalse(Recipient.objects.filter(pk=queued.pk).exists())
+        self.assertEqual(batch.recipients.count(), 1)
+
+    def test_report_hides_batch_and_metadata_columns_but_keeps_batch_filter(self):
+        batch = Batch.objects.create(name='VisibleFilterBatch', subject='x', body='x')
+        contact = Contact.objects.create(
+            name='Anna', email='anna-report@example.com', metadata={'Priority': 'A'}
+        )
+        Recipient.objects.create(batch=batch, contact=contact)
+        response = self.client.get(reverse('outreach:report'))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, '<th>Metadata</th>', html=True)
+        self.assertNotContains(response, '<th>Batch</th>', html=True)
+        self.assertContains(response, 'VisibleFilterBatch')
+        self.assertContains(response, 'name="batch"')

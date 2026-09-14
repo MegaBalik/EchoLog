@@ -25,7 +25,7 @@
 
 <section class="card table-card report-table">
   <div class="table-scroll"><table>
-    <thead><tr><th>Name</th><th>Company</th><th>Email</th><th>Country</th><th>Metadata</th><th>Batch</th><th>Status</th><th>Hope</th><th>Sent at</th><th>Replied at</th><th>Notes</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>Company</th><th>Email</th><th>Country</th><th>Status</th><th>Hope</th><th>Sent at</th><th>Replied at</th><th>Notes</th><th></th></tr></thead>
     <tbody>
       {% for r in recipients %}
       <tr class="{% if r.contact.do_not_contact %}row-muted{% endif %}">
@@ -33,8 +33,6 @@
         <td>{{ r.contact.company|default:'—' }}</td>
         <td>{{ r.contact.email }}</td>
         <td>{{ r.contact.country|default:'—' }}</td>
-        <td>{% if r.contact.metadata_items %}<div class="metadata-list">{% for key,value in r.contact.metadata_items %}<span class="metadata-item"><b>{{ key }}</b>: {{ value }}</span>{% endfor %}</div>{% else %}—{% endif %}</td>
-        <td><a href="{% url 'outreach:batch_detail' r.batch.pk %}">{{ r.batch.name }}</a></td>
         <td><span class="badge badge-{{ r.status }} {% if r.follow_up_due %}badge-followup{% endif %}">{{ r.communication_label }}</span>{% if r.last_error %}<div class="tiny error-text">{{ r.last_error }}</div>{% endif %}</td>
         <td>
           <form method="post" action="{% url 'outreach:recipient_update' r.pk %}" class="inline-edit">{% csrf_token %}
@@ -53,7 +51,7 @@
           <form method="post" action="{% url 'outreach:recipient_mark_bounced' r.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button type="submit">Mark bounced</button></form>
         </div></details></td>
       </tr>
-      {% empty %}<tr><td colspan="12" class="empty-cell">No matching recipients.</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="10" class="empty-cell">No matching recipients.</td></tr>{% endfor %}
     </tbody>
   </table></div>
   {% if page_obj.paginator.num_pages > 1 %}
