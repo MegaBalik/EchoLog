@@ -128,8 +128,11 @@ def send_next(now=None, force_window=False):
 
             while True:
                 recipient = (
-                    batch.recipients.select_for_update(skip_locked=True)
-                    .select_related('contact', 'batch', 'sender_account')
+                    batch.recipients.select_for_update(
+                        skip_locked=True,
+                        of=('self',),
+                    )
+                    .select_related('contact')
                     .filter(status=Recipient.Status.QUEUED)
                     .order_by('queue_position', 'id')
                     .first()
