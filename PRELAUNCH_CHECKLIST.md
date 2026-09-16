@@ -18,7 +18,7 @@ Use this before clicking **Start batch** on the first real campaign.
 - [ ] HTTPS works at the EchoLog hostname.
 - [ ] Google OAuth redirect URI exactly matches the production callback.
 - [ ] Gmail status on dashboard says connected.
-- [ ] `ECHOLOG_DAILY_LIMIT=30` (or another deliberately chosen conservative value).
+- [ ] `ECHOLOG_DEFAULT_SENDER_DAILY_LIMIT=30` (or another deliberately chosen conservative value).
 - [ ] Send timer active every 15 minutes.
 - [ ] Reply timer active hourly.
 - [ ] PostgreSQL backup timer active and at least one restore procedure documented/tested.

@@ -11,11 +11,19 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .forms import parse_contacts_file
-from .models import Batch, Contact, Recipient
+from .models import Batch, Contact, Recipient, SenderAccount
 from .services import render_text, send_next
 
 
 PRAGUE = ZoneInfo('Europe/Prague')
+
+
+def default_sender():
+    sender, _ = SenderAccount.objects.get_or_create(
+        email='info@rb-translations.cz',
+        defaults={'name': 'RB Translations', 'daily_limit': 30},
+    )
+    return sender
 
 
 class ImportParserTests(TestCase):
@@ -75,7 +83,7 @@ class ImportParserTests(TestCase):
 
 class ModelAndTemplateTests(TestCase):
     def setUp(self):
-        self.batch = Batch.objects.create(
+        self.batch = Batch.objects.create(sender_account=default_sender(), 
             name='DE',
             subject='Hello {Name} / {Company}',
             body='Country: {Country}; priority: {Priority}; org: {Organization}',
@@ -126,10 +134,11 @@ class QueueTests(TestCase):
         ECHOLOG_SEND_WINDOW_END='16:30',
         ECHOLOG_SEND_WEEKDAYS_ONLY=True,
     )
+    @patch('outreach.services.is_connected', return_value=True)
     @patch('outreach.services.send_plain_email')
-    def test_sends_one_message(self, mocked_send):
+    def test_sends_one_message(self, mocked_send, mocked_connected):
         mocked_send.return_value = {'id': 'm1', 'threadId': 't1', 'rfc_message_id': '<x@example.com>'}
-        batch = Batch.objects.create(
+        batch = Batch.objects.create(sender_account=default_sender(), 
             name='DE', subject='Hi {Name}', body='Hello',
             status=Batch.Status.RUNNING, started_at=timezone.now(),
         )
@@ -140,20 +149,22 @@ class QueueTests(TestCase):
         recipient.refresh_from_db()
         self.assertEqual(recipient.status, Recipient.Status.SENT)
         self.assertEqual(recipient.gmail_thread_id, 't1')
+        self.assertEqual(recipient.sender_account, default_sender())
         mocked_send.assert_called_once()
 
     @override_settings(ECHOLOG_DAILY_LIMIT=30, ECHOLOG_SEND_WINDOW_START='08:30', ECHOLOG_SEND_WINDOW_END='16:30')
+    @patch('outreach.services.is_connected', return_value=True)
     @patch('outreach.services.send_plain_email')
-    def test_prior_contact_is_skipped_without_consuming_timer_slot(self, mocked_send):
+    def test_prior_contact_is_skipped_without_consuming_timer_slot(self, mocked_send, mocked_connected):
         mocked_send.return_value = {'id': 'm2', 'threadId': 't2', 'rfc_message_id': '<y@example.com>'}
-        old = Batch.objects.create(name='Old', subject='x', body='x', status=Batch.Status.COMPLETED)
+        old = Batch.objects.create(sender_account=default_sender(), name='Old', subject='x', body='x', status=Batch.Status.COMPLETED)
         c1 = Contact.objects.create(name='Known', email='known@example.com')
         Recipient.objects.create(
             batch=old, contact=c1, status=Recipient.Status.SENT,
             sent_at=self.aware(2026, 9, 1, 10),
         )
 
-        batch = Batch.objects.create(
+        batch = Batch.objects.create(sender_account=default_sender(), 
             name='New', subject='Hi', body='Body',
             status=Batch.Status.RUNNING, started_at=timezone.now(),
         )
@@ -169,17 +180,21 @@ class QueueTests(TestCase):
         self.assertEqual(r2.status, Recipient.Status.SENT)
         self.assertEqual(mocked_send.call_count, 1)
 
-    @override_settings(ECHOLOG_DAILY_LIMIT=1, ECHOLOG_SEND_WINDOW_START='08:30', ECHOLOG_SEND_WINDOW_END='16:30')
+    @override_settings(ECHOLOG_SEND_WINDOW_START='08:30', ECHOLOG_SEND_WINDOW_END='16:30')
+    @patch('outreach.services.is_connected', return_value=True)
     @patch('outreach.services.send_plain_email')
-    def test_global_daily_limit(self, mocked_send):
-        first_batch = Batch.objects.create(name='First', subject='x', body='x')
+    def test_sender_daily_limit(self, mocked_send, mocked_connected):
+        sender = default_sender()
+        sender.daily_limit = 1
+        sender.save(update_fields=['daily_limit'])
+        first_batch = Batch.objects.create(sender_account=default_sender(), name='First', subject='x', body='x')
         first_contact = Contact.objects.create(name='One', email='one@example.com')
         Recipient.objects.create(
-            batch=first_batch, contact=first_contact,
+            batch=first_batch, contact=first_contact, sender_account=sender,
             status=Recipient.Status.SENT, sent_at=self.aware(2026, 9, 10, 9),
         )
 
-        batch = Batch.objects.create(
+        batch = Batch.objects.create(sender_account=default_sender(), 
             name='Second', subject='x', body='x',
             status=Batch.Status.RUNNING, started_at=timezone.now(),
         )
@@ -187,12 +202,13 @@ class QueueTests(TestCase):
         Recipient.objects.create(batch=batch, contact=contact)
         result = send_next(now=self.aware(2026, 9, 10, 10))
         self.assertFalse(result['sent'])
-        self.assertEqual(result['reason'], 'global_daily_limit')
+        self.assertEqual(result['reason'], 'sender_daily_limit')
         mocked_send.assert_not_called()
 
     @override_settings(ECHOLOG_SEND_WINDOW_START='08:30', ECHOLOG_SEND_WINDOW_END='16:30')
+    @patch('outreach.services.is_connected', return_value=True)
     @patch('outreach.services.send_plain_email')
-    def test_outside_window_does_not_send(self, mocked_send):
+    def test_outside_window_does_not_send(self, mocked_send, mocked_connected):
         result = send_next(now=self.aware(2026, 9, 10, 7))
         self.assertEqual(result['reason'], 'outside_window')
         mocked_send.assert_not_called()
@@ -223,6 +239,7 @@ class ViewTests(TestCase):
         )
         response = self.client.post(reverse('outreach:batch_create'), {
             'name': 'Generic test',
+            'sender_account': default_sender().pk,
             'subject': 'Hello {Name} – {Priority}',
             'body': 'Hi from {Company}',
             'daily_limit': 30,
@@ -248,7 +265,7 @@ class ViewTests(TestCase):
             content_type='text/csv',
         )
         response = self.client.post(reverse('outreach:batch_create'), {
-            'name': 'Enrichment', 'subject': 'Hi', 'body': 'Body',
+            'name': 'Enrichment', 'sender_account': default_sender().pk, 'subject': 'Hi', 'body': 'Body',
             'daily_limit': 30, 'allow_recontact': '', 'contacts_file': upload,
         })
         self.assertEqual(response.status_code, 302)
@@ -260,7 +277,7 @@ class ViewTests(TestCase):
         })
 
     def test_report_search_finds_metadata(self):
-        batch = Batch.objects.create(name='Search', subject='x', body='x')
+        batch = Batch.objects.create(sender_account=default_sender(), name='Search', subject='x', body='x')
         contact = Contact.objects.create(
             name='Anna', email='anna@example.com', metadata={'Specialization': 'Medical'}
         )
@@ -270,7 +287,7 @@ class ViewTests(TestCase):
         self.assertContains(response, 'anna@example.com')
 
     def test_report_export_flattens_metadata_columns(self):
-        batch = Batch.objects.create(name='Export', subject='x', body='x')
+        batch = Batch.objects.create(sender_account=default_sender(), name='Export', subject='x', body='x')
         contact = Contact.objects.create(
             name='Anna', email='anna@example.com', country='DE',
             metadata={'Priority': 'A', 'Specialization': 'Medical'},
@@ -298,14 +315,16 @@ class BatchLifecycleViewTests(TestCase):
         contact = Contact.objects.create(name=email.split('@')[0], email=email)
         recipient = Recipient.objects.create(batch=batch, contact=contact)
         if sent:
+            recipient.sender_account = batch.sender_account
             recipient.sent_at = timezone.now()
             recipient.status = Recipient.Status.SENT
-            recipient.save(update_fields=['sent_at', 'status', 'updated_at'])
+            recipient.save(update_fields=['sender_account', 'sent_at', 'status', 'updated_at'])
         return recipient
 
     def test_message_editable_in_draft(self):
-        batch = Batch.objects.create(name='Draft', subject='Old', body='Old body')
+        batch = Batch.objects.create(sender_account=default_sender(), name='Draft', subject='Old', body='Old body')
         response = self.client.post(reverse('outreach:batch_edit_message', args=[batch.pk]), {
+            'sender_account': default_sender().pk,
             'subject': 'New subject',
             'body': 'New body',
         })
@@ -315,10 +334,11 @@ class BatchLifecycleViewTests(TestCase):
         self.assertEqual(batch.body, 'New body')
 
     def test_message_locked_while_running(self):
-        batch = Batch.objects.create(
+        batch = Batch.objects.create(sender_account=default_sender(), 
             name='Running', subject='Old', body='Old body', status=Batch.Status.RUNNING
         )
         response = self.client.post(reverse('outreach:batch_edit_message', args=[batch.pk]), {
+            'sender_account': default_sender().pk,
             'subject': 'New subject',
             'body': 'New body',
         })
@@ -328,10 +348,11 @@ class BatchLifecycleViewTests(TestCase):
         self.assertEqual(batch.body, 'Old body')
 
     def test_message_editable_after_pause(self):
-        batch = Batch.objects.create(
+        batch = Batch.objects.create(sender_account=default_sender(), 
             name='Paused', subject='Old', body='Old body', status=Batch.Status.PAUSED
         )
         response = self.client.post(reverse('outreach:batch_edit_message', args=[batch.pk]), {
+            'sender_account': default_sender().pk,
             'subject': 'Paused subject',
             'body': 'Paused body',
         })
@@ -341,7 +362,7 @@ class BatchLifecycleViewTests(TestCase):
         self.assertEqual(batch.body, 'Paused body')
 
     def test_delete_unsent_batch_removes_batch_and_recipients(self):
-        batch = Batch.objects.create(name='Unsent', subject='x', body='x')
+        batch = Batch.objects.create(sender_account=default_sender(), name='Unsent', subject='x', body='x')
         recipient = self._recipient(batch, 'queued@example.com')
         response = self.client.post(reverse('outreach:batch_delete', args=[batch.pk]))
         self.assertRedirects(response, reverse('outreach:dashboard'))
@@ -350,7 +371,7 @@ class BatchLifecycleViewTests(TestCase):
         self.assertTrue(Contact.objects.filter(email='queued@example.com').exists())
 
     def test_delete_partially_sent_batch_keeps_only_sent_history(self):
-        batch = Batch.objects.create(
+        batch = Batch.objects.create(sender_account=default_sender(), 
             name='Partial', subject='x', body='x', status=Batch.Status.PAUSED
         )
         sent = self._recipient(batch, 'sent@example.com', sent=True)
@@ -365,7 +386,7 @@ class BatchLifecycleViewTests(TestCase):
         self.assertEqual(batch.recipients.count(), 1)
 
     def test_report_hides_batch_and_metadata_columns_but_keeps_batch_filter(self):
-        batch = Batch.objects.create(name='VisibleFilterBatch', subject='x', body='x')
+        batch = Batch.objects.create(sender_account=default_sender(), name='VisibleFilterBatch', subject='x', body='x')
         contact = Contact.objects.create(
             name='Anna', email='anna-report@example.com', metadata={'Priority': 'A'}
         )

@@ -89,7 +89,11 @@ LOGIN_REDIRECT_URL = 'outreach:dashboard'
 LOGOUT_REDIRECT_URL = 'login'
 
 # EchoLog operational settings
-ECHOLOG_DAILY_LIMIT = int(os.environ.get('ECHOLOG_DAILY_LIMIT', '30'))
+ECHOLOG_DEFAULT_SENDER_DAILY_LIMIT = int(
+    os.environ.get('ECHOLOG_DEFAULT_SENDER_DAILY_LIMIT', os.environ.get('ECHOLOG_DAILY_LIMIT', '30'))
+)
+# Backward-compatible alias used by older deployments and bootstrap migration.
+ECHOLOG_DAILY_LIMIT = ECHOLOG_DEFAULT_SENDER_DAILY_LIMIT
 ECHOLOG_SEND_WINDOW_START = os.environ.get('ECHOLOG_SEND_WINDOW_START', '08:30')
 ECHOLOG_SEND_WINDOW_END = os.environ.get('ECHOLOG_SEND_WINDOW_END', '16:30')
 ECHOLOG_SEND_WEEKDAYS_ONLY = os.environ.get('ECHOLOG_SEND_WEEKDAYS_ONLY', '1') == '1'
@@ -100,6 +104,11 @@ ECHOLOG_GOOGLE_CLIENT_SECRET_FILE = os.environ.get(
 ECHOLOG_GOOGLE_TOKEN_FILE = os.environ.get(
     'ECHOLOG_GOOGLE_TOKEN_FILE', str(BASE_DIR / 'secrets' / 'google_token.json')
 )
+ECHOLOG_GOOGLE_TOKEN_DIR = os.environ.get(
+    'ECHOLOG_GOOGLE_TOKEN_DIR', str(Path(ECHOLOG_GOOGLE_TOKEN_FILE).parent)
+)
+# Legacy bootstrap values: migration 0003 converts the existing single-account setup
+# into the first SenderAccount. New senders are configured in the EchoLog UI.
 ECHOLOG_FROM_EMAIL = os.environ.get('ECHOLOG_FROM_EMAIL', 'info@rb-translations.cz')
 
 if not DEBUG:

@@ -64,7 +64,7 @@ DJANGO_ALLOWED_HOSTS=echolog.rb-translations.cz
 DJANGO_CSRF_TRUSTED_ORIGINS=https://echolog.rb-translations.cz
 POSTGRES_PASSWORD=...
 ECHOLOG_FROM_EMAIL=info@rb-translations.cz
-ECHOLOG_DAILY_LIMIT=30
+ECHOLOG_DEFAULT_SENDER_DAILY_LIMIT=30
 ```
 
 ## 5. Secrets directory

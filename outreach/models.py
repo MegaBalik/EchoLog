@@ -1,7 +1,13 @@
+from uuid import uuid4
+
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from django.utils import timezone
+
+
+def generate_sender_token_filename():
+    return f'google_token_{uuid4().hex}.json'
 
 
 class Contact(models.Model):
@@ -40,6 +46,33 @@ class Contact(models.Model):
         return sorted((self.metadata or {}).items(), key=lambda item: item[0].casefold())
 
 
+class SenderAccount(models.Model):
+    """One outbound Gmail identity with its own OAuth credentials and rate ceiling."""
+
+    name = models.CharField(max_length=120)
+    email = models.EmailField(unique=True)
+    token_file = models.CharField(
+        max_length=255,
+        unique=True,
+        default=generate_sender_token_filename,
+        editable=False,
+        help_text='OAuth token filename inside the configured EchoLog token directory.',
+    )
+    daily_limit = models.PositiveSmallIntegerField(
+        default=30,
+        validators=[MinValueValidator(1), MaxValueValidator(2000)],
+    )
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name', 'email']
+
+    def __str__(self):
+        return f'{self.name} <{self.email}>'
+
+
 class Batch(models.Model):
     class Status(models.TextChoices):
         DRAFT = 'draft', 'Draft'
@@ -48,13 +81,18 @@ class Batch(models.Model):
         COMPLETED = 'completed', 'Completed'
 
     name = models.CharField(max_length=240)
+    sender_account = models.ForeignKey(
+        SenderAccount,
+        on_delete=models.PROTECT,
+        related_name='batches',
+    )
     subject = models.CharField(max_length=998)
     body = models.TextField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     daily_limit = models.PositiveSmallIntegerField(
         default=30,
         validators=[MinValueValidator(1), MaxValueValidator(2000)],
-        help_text='Per-batch ceiling. The global server limit still applies.',
+        help_text='Per-batch ceiling. The sender account daily limit also applies.',
     )
     allow_recontact = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -92,6 +130,10 @@ class Batch(models.Model):
     def message_editable(self):
         return self.status in {self.Status.DRAFT, self.Status.PAUSED}
 
+    @property
+    def sender_editable(self):
+        return self.message_editable and not self.recipients.filter(sent_at__isnull=False).exists()
+
 
 class Recipient(models.Model):
     class Status(models.TextChoices):
@@ -108,6 +150,14 @@ class Recipient(models.Model):
 
     batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='recipients')
     contact = models.ForeignKey(Contact, on_delete=models.PROTECT, related_name='recipients')
+    sender_account = models.ForeignKey(
+        SenderAccount,
+        on_delete=models.PROTECT,
+        related_name='sent_recipients',
+        null=True,
+        blank=True,
+        help_text='The actual sender used when this recipient was sent.',
+    )
     queue_position = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED)
     hope = models.CharField(max_length=20, choices=Hope.choices, blank=True)
@@ -157,14 +207,18 @@ class Recipient(models.Model):
 
 
 class GmailSyncState(models.Model):
-    singleton_key = models.PositiveSmallIntegerField(default=1, unique=True, editable=False)
+    sender_account = models.OneToOneField(
+        SenderAccount,
+        on_delete=models.CASCADE,
+        related_name='gmail_sync_state',
+    )
     history_id = models.CharField(max_length=64, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f'Gmail sync @ {self.history_id or "not initialized"}'
+        return f'{self.sender_account.email} Gmail sync @ {self.history_id or "not initialized"}'
 
     @classmethod
-    def get_solo(cls):
-        obj, _ = cls.objects.get_or_create(singleton_key=1)
+    def get_for_sender(cls, sender_account):
+        obj, _ = cls.objects.get_or_create(sender_account=sender_account)
         return obj

@@ -14,7 +14,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 
-from .forms import BatchCreateForm, BatchMessageForm, RecipientUpdateForm, TestSendForm
+from .forms import BatchCreateForm, BatchMessageForm, RecipientUpdateForm, SenderAccountForm, TestSendForm
 from .gmail import (
     GmailNotConfigured,
     build_service,
@@ -26,7 +26,7 @@ from .gmail import (
     save_credentials,
     send_plain_email,
 )
-from .models import Batch, Contact, GmailSyncState, Recipient
+from .models import Batch, Contact, GmailSyncState, Recipient, SenderAccount
 from .services import render_text
 
 
@@ -69,29 +69,36 @@ def _merge_contact_from_import(contact, item):
 
 @login_required
 def dashboard(request):
-    batches = Batch.objects.annotate(
+    sender_id = request.GET.get('sender', '')
+    batches = Batch.objects.select_related('sender_account').annotate(
         total=Count('recipients'),
         sent_total=Count('recipients', filter=Q(recipients__sent_at__isnull=False)),
         replied_total=Count('recipients', filter=Q(recipients__replied_at__isnull=False)),
         hopeful_total=Count('recipients', filter=Q(recipients__hope=Recipient.Hope.HOPEFUL)),
         active_total=Count('recipients', filter=Q(recipients__hope=Recipient.Hope.ACTIVE)),
     )
-    totals = Recipient.objects.aggregate(
+    recipient_totals = Recipient.objects.all()
+    if sender_id:
+        batches = batches.filter(sender_account_id=sender_id)
+        recipient_totals = recipient_totals.filter(batch__sender_account_id=sender_id)
+    totals = recipient_totals.aggregate(
         total=Count('id'),
         sent=Count('id', filter=Q(sent_at__isnull=False)),
         replied=Count('id', filter=Q(replied_at__isnull=False)),
         hopeful=Count('id', filter=Q(hope=Recipient.Hope.HOPEFUL)),
         active=Count('id', filter=Q(hope=Recipient.Hope.ACTIVE)),
     )
+    sender_accounts = list(SenderAccount.objects.all())
+    for sender in sender_accounts:
+        sender.gmail_connected = is_connected(sender)
     context = {
         'batches': batches,
         'totals': totals,
-        'gmail_connected': is_connected(),
-        'daily_limit': settings.ECHOLOG_DAILY_LIMIT,
+        'sender_accounts': sender_accounts,
+        'sender_filter': sender_id,
         'default_followup_days': settings.ECHOLOG_DEFAULT_FOLLOWUP_DAYS,
     }
     return render(request, 'outreach/dashboard.html', context)
-
 
 @login_required
 def batch_create(request):
@@ -141,14 +148,20 @@ def batch_create(request):
             )
             return redirect('outreach:batch_detail', pk=batch.pk)
     else:
-        form = BatchCreateForm(initial={'daily_limit': settings.ECHOLOG_DAILY_LIMIT})
+        default_sender = SenderAccount.objects.filter(active=True).first()
+        initial = {}
+        if default_sender:
+            initial = {
+                'sender_account': default_sender,
+                'daily_limit': default_sender.daily_limit,
+            }
+        form = BatchCreateForm(initial=initial)
     return render(request, 'outreach/batch_form.html', {'form': form})
-
 
 @login_required
 def batch_detail(request, pk):
-    batch = get_object_or_404(Batch, pk=pk)
-    recipients = batch.recipients.select_related('contact').all()[:50]
+    batch = get_object_or_404(Batch.objects.select_related('sender_account'), pk=pk)
+    recipients = batch.recipients.select_related('contact', 'sender_account').all()[:50]
     batch_contact_ids = batch.recipients.values_list('contact_id', flat=True)
     previous_contacts = (
         Recipient.objects.filter(contact_id__in=batch_contact_ids, sent_at__isnull=False)
@@ -173,31 +186,37 @@ def batch_detail(request, pk):
         'test_form': test_form,
         'message_form': message_form,
         'previous_contacts': previous_contacts,
-        'gmail_connected': is_connected(),
+        'gmail_connected': is_connected(batch.sender_account),
         'default_followup_days': settings.ECHOLOG_DEFAULT_FOLLOWUP_DAYS,
     })
-
 
 @login_required
 @transaction.atomic
 def batch_start(request, pk):
     if request.method != 'POST':
         return redirect('outreach:batch_detail', pk=pk)
-    batch = get_object_or_404(Batch.objects.select_for_update(), pk=pk)
-    if not is_connected():
-        messages.error(request, 'Connect Gmail before starting a batch.')
+    batch = get_object_or_404(
+        Batch.objects.select_for_update().select_related('sender_account'), pk=pk
+    )
+    if not batch.sender_account.active:
+        messages.error(request, 'This sender account is inactive.')
+        return redirect('outreach:batch_detail', pk=pk)
+    if not is_connected(batch.sender_account):
+        messages.error(request, f'Connect Gmail for {batch.sender_account.email} before starting this batch.')
         return redirect('outreach:batch_detail', pk=pk)
     if batch.status == Batch.Status.COMPLETED:
         messages.error(request, 'Completed batches cannot be restarted. Create a new batch instead.')
         return redirect('outreach:batch_detail', pk=pk)
-    Batch.objects.filter(status=Batch.Status.RUNNING).exclude(pk=batch.pk).update(status=Batch.Status.PAUSED)
+    Batch.objects.filter(
+        status=Batch.Status.RUNNING,
+        sender_account=batch.sender_account,
+    ).exclude(pk=batch.pk).update(status=Batch.Status.PAUSED)
     batch.status = Batch.Status.RUNNING
     if not batch.started_at:
         batch.started_at = timezone.now()
     batch.save(update_fields=['status', 'started_at'])
-    messages.success(request, 'Batch started. Other running batches, if any, were paused.')
+    messages.success(request, 'Batch started. Any other running batch for this sender was paused.')
     return redirect('outreach:batch_detail', pk=pk)
-
 
 @login_required
 def batch_pause(request, pk):
@@ -218,17 +237,16 @@ def batch_edit_message(request, pk):
 
     batch = get_object_or_404(Batch.objects.select_for_update(), pk=pk)
     if not batch.message_editable:
-        messages.error(request, 'The message can only be edited while the batch is Draft or Paused.')
+        messages.error(request, 'The batch can only be edited while it is Draft or Paused.')
         return redirect('outreach:batch_detail', pk=pk)
 
     form = BatchMessageForm(request.POST, instance=batch)
     if form.is_valid():
         form.save()
-        messages.success(request, 'Subject and body updated. Unsent recipients will use the new message.')
+        messages.success(request, 'Batch sender and message updated. Unsent recipients will use these settings.')
     else:
-        messages.error(request, 'Could not save the message. Check subject and body.')
+        messages.error(request, 'Could not save the batch settings. Check the fields.')
     return redirect('outreach:batch_detail', pk=pk)
-
 
 @login_required
 @transaction.atomic
@@ -264,31 +282,38 @@ def batch_delete(request, pk):
 
 @login_required
 def batch_test_send(request, pk):
-    batch = get_object_or_404(Batch, pk=pk)
+    batch = get_object_or_404(Batch.objects.select_related('sender_account'), pk=pk)
     form = TestSendForm(request.POST, user=request.user)
     if request.method == 'POST' and form.is_valid():
         first = batch.recipients.select_related('contact').first()
         if not first:
             messages.error(request, 'The batch has no recipients.')
+        elif not is_connected(batch.sender_account):
+            messages.error(request, f'Gmail is not connected for {batch.sender_account.email}.')
         else:
             subject = '[EchoLog TEST] ' + render_text(batch.subject, first.contact)
             body = render_text(batch.body, first.contact)
             try:
-                send_plain_email(form.cleaned_data['email'], subject, body)
-                messages.success(request, f'Test sent to {form.cleaned_data["email"]}.')
+                send_plain_email(batch.sender_account, form.cleaned_data['email'], subject, body)
+                messages.success(
+                    request,
+                    f'Test sent from {batch.sender_account.email} to {form.cleaned_data["email"]}.',
+                )
             except Exception as exc:
                 messages.error(request, f'Test send failed: {exc}')
     return redirect('outreach:batch_detail', pk=pk)
 
-
 def _filtered_recipients(request):
-    qs = Recipient.objects.select_related('contact', 'batch').order_by('-sent_at', '-id')
+    qs = Recipient.objects.select_related('contact', 'batch', 'batch__sender_account', 'sender_account').order_by('-sent_at', '-id')
+    sender_id = request.GET.get('sender', '')
     batch_id = request.GET.get('batch', '')
     country = request.GET.get('country', '')
     status = request.GET.get('status', '')
     hope = request.GET.get('hope', '')
     q = request.GET.get('q', '').strip()
 
+    if sender_id:
+        qs = qs.filter(batch__sender_account_id=sender_id)
     if batch_id:
         qs = qs.filter(batch_id=batch_id)
     if country:
@@ -326,8 +351,14 @@ def _filtered_recipients(request):
     elif status == 'skipped':
         qs = qs.filter(status=Recipient.Status.SKIPPED)
 
-    return qs, {'batch': batch_id, 'country': country, 'status': status, 'hope': hope, 'q': q}
-
+    return qs, {
+        'sender': sender_id,
+        'batch': batch_id,
+        'country': country,
+        'status': status,
+        'hope': hope,
+        'q': q,
+    }
 
 @login_required
 def report(request):
@@ -346,7 +377,8 @@ def report(request):
         'recipients': page_obj.object_list,
         'page_obj': page_obj,
         'querystring': params.urlencode(),
-        'batches': Batch.objects.all(),
+        'sender_accounts': SenderAccount.objects.all(),
+        'batches': Batch.objects.select_related('sender_account').all(),
         'countries': countries,
         'filters': filters,
         'hope_choices': Recipient.Hope.choices,
@@ -411,6 +443,7 @@ def report_export(request):
     writer = csv.writer(response)
     writer.writerow([
         'Batch',
+        'Sender',
         'Name',
         'Email',
         'Country',
@@ -432,6 +465,7 @@ def report_export(request):
         metadata = contact.metadata or {}
         writer.writerow([
             r.batch.name,
+            str(r.sender_account or r.batch.sender_account),
             contact.name,
             contact.email,
             contact.country,
@@ -451,7 +485,32 @@ def report_export(request):
 
 
 @login_required
+def sender_create(request):
+    if request.method == 'POST':
+        form = SenderAccountForm(request.POST)
+        if form.is_valid():
+            sender = form.save()
+            messages.success(request, f'Sender account {sender} created. Connect Gmail to authorize it.')
+            return redirect('outreach:sender_google_connect', pk=sender.pk)
+    else:
+        form = SenderAccountForm(initial={
+            'daily_limit': getattr(settings, 'ECHOLOG_DEFAULT_SENDER_DAILY_LIMIT', settings.ECHOLOG_DAILY_LIMIT),
+        })
+    return render(request, 'outreach/sender_form.html', {'form': form})
+
+
+@login_required
 def google_connect(request):
+    sender = SenderAccount.objects.filter(active=True).first()
+    if not sender:
+        messages.error(request, 'Create a sender account first.')
+        return redirect('outreach:sender_create')
+    return redirect('outreach:sender_google_connect', pk=sender.pk)
+
+
+@login_required
+def sender_google_connect(request, pk):
+    sender = get_object_or_404(SenderAccount, pk=pk)
     redirect_uri = request.build_absolute_uri(reverse('outreach:google_callback'))
     try:
         flow = make_flow(redirect_uri)
@@ -464,6 +523,7 @@ def google_connect(request):
 
         request.session['google_oauth_state'] = state
         request.session['google_oauth_code_verifier'] = flow.code_verifier
+        request.session['google_oauth_sender_id'] = sender.pk
 
         return redirect(auth_url)
 
@@ -476,43 +536,41 @@ def google_connect(request):
 def google_callback(request):
     state = request.session.pop('google_oauth_state', None)
     code_verifier = request.session.pop('google_oauth_code_verifier', None)
+    sender_id = request.session.pop('google_oauth_sender_id', None)
 
-    if not state or request.GET.get('state') != state:
+    if not state or request.GET.get('state') != state or not sender_id:
         messages.error(request, 'Gmail connection failed: OAuth state mismatch.')
         return redirect('outreach:dashboard')
 
+    sender = get_object_or_404(SenderAccount, pk=sender_id)
     redirect_uri = request.build_absolute_uri(reverse('outreach:google_callback'))
 
     try:
         flow = make_flow(redirect_uri, state=state)
         flow.code_verifier = code_verifier
+        flow.fetch_token(authorization_response=request.build_absolute_uri())
+        save_credentials(flow.credentials, sender)
 
-        flow.fetch_token(
-            authorization_response=request.build_absolute_uri()
-        )
-
-        save_credentials(flow.credentials)
-
-        service = build_service()
+        service = build_service(sender)
         connected_email = profile_email(service)
 
-        if connected_email != settings.ECHOLOG_FROM_EMAIL.lower():
-            clear_credentials()
+        if connected_email != sender.email.lower():
+            clear_credentials(sender)
             raise GmailNotConfigured(
-                f'Connected Gmail account is {connected_email}, '
-                f'expected {settings.ECHOLOG_FROM_EMAIL}.'
+                f'Connected Gmail account is {connected_email}, expected {sender.email}.'
             )
 
-        sync_state = GmailSyncState.get_solo()
+        sync_state = GmailSyncState.get_for_sender(sender)
         sync_state.history_id = current_history_id(service)
         sync_state.save(update_fields=['history_id', 'updated_at'])
 
         messages.success(
             request,
-            'Gmail connected successfully; reply history baseline initialized.'
+            f'{sender.email} connected successfully; reply history baseline initialized.',
         )
 
     except Exception as exc:
         messages.error(request, f'Gmail connection failed: {exc}')
 
     return redirect('outreach:dashboard')
+

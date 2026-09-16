@@ -640,10 +640,14 @@ tbody tr:last-child td {
 
 .filters {
     display: grid;
-    grid-template-columns: minmax(220px, 2fr) repeat(4, minmax(130px, 1fr)) auto auto;
+    grid-template-columns: minmax(220px, 2fr) repeat(5, minmax(130px, 1fr)) auto auto;
     gap: 9px;
     padding: 14px;
     margin-bottom: 16px
+}
+
+.sender-filter {
+    grid-template-columns: minmax(260px, 1fr) auto auto;
 }
 
 .report-table {

@@ -4,13 +4,45 @@
   <div>
     <div class="eyebrow">Outreach cockpit</div>
     <h1>Batches</h1>
-    <p class="muted">One active batch at a time. EchoLog sends at most {{ daily_limit }} messages per working day.</p>
+    <p class="muted">One running batch per sender account. The worker rotates fairly across connected senders.</p>
   </div>
   <div class="head-actions">
-    {% if gmail_connected %}<span class="pill pill-good">Gmail connected</span><a class="small" href="{% url 'outreach:google_connect' %}">Reconnect</a>{% else %}<a class="button button-warn" href="{% url 'outreach:google_connect' %}">Connect Gmail</a>{% endif %}
+    <a class="button button-ghost" href="{% url 'outreach:sender_create' %}">+ Sender</a>
     <a class="button button-primary" href="{% url 'outreach:batch_create' %}">+ New batch</a>
   </div>
 </div>
+
+{% if sender_accounts %}
+<section class="card" style="margin-bottom:1rem;">
+  <div class="section-head"><h2>Sender accounts</h2><span class="muted small">Each sender has its own Gmail OAuth token and daily limit.</span></div>
+  <div class="batch-meta">
+    {% for sender in sender_accounts %}
+      <div>
+        <span>{{ sender.name }}</span>
+        <strong>{{ sender.email }}</strong>
+        <div class="small muted">Daily limit {{ sender.daily_limit }} · {% if sender.active %}active{% else %}inactive{% endif %}</div>
+        <div style="margin-top:.45rem;">
+          {% if sender.gmail_connected %}
+            <span class="pill pill-good">Gmail connected</span>
+            <a class="small" href="{% url 'outreach:sender_google_connect' sender.pk %}">Reconnect</a>
+          {% else %}
+            <a class="button button-warn button-small" href="{% url 'outreach:sender_google_connect' sender.pk %}">Connect Gmail</a>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<form method="get" class="filters sender-filter card" style="margin-bottom:1rem;">
+  <select name="sender">
+    <option value="">All senders</option>
+    {% for sender in sender_accounts %}<option value="{{ sender.id }}" {% if sender_filter == sender.id|stringformat:'s' %}selected{% endif %}>{{ sender.name }} · {{ sender.email }}</option>{% endfor %}
+  </select>
+  <button class="button button-primary" type="submit">Filter</button>
+  {% if sender_filter %}<a class="button button-ghost" href="{% url 'outreach:dashboard' %}">Clear</a>{% endif %}
+</form>
 
 <section class="stats-grid">
   <div class="stat"><span>Recipients</span><strong>{{ totals.total|default:0 }}</strong></div>
@@ -28,7 +60,7 @@
         <span class="status-dot status-{{ batch.status }}"></span>
         <div>
           <strong>{{ batch.name }}</strong>
-          <div class="muted small">{{ batch.get_status_display }} · created {{ batch.created_at|date:'j M Y H:i' }}</div>
+          <div class="muted small">{{ batch.sender_account.name }} · {{ batch.get_status_display }} · created {{ batch.created_at|date:'j M Y H:i' }}</div>
         </div>
       </div>
       <div class="batch-summary-stats">
@@ -41,8 +73,10 @@
     <div class="batch-body">
       <div class="progress"><span style="width:{% widthratio batch.sent_total batch.total|default:1 100 %}%"></span></div>
       <div class="batch-meta">
+        <div><span>Send from</span><strong>{{ batch.sender_account.email }}</strong></div>
         <div><span>Subject</span><strong>{{ batch.subject }}</strong></div>
-        <div><span>Daily limit</span><strong>{{ batch.daily_limit }}</strong></div>
+        <div><span>Batch daily limit</span><strong>{{ batch.daily_limit }}</strong></div>
+        <div><span>Sender daily limit</span><strong>{{ batch.sender_account.daily_limit }}</strong></div>
         <div><span>Follow-up</span><strong>{{ default_followup_days|default:14 }} days</strong></div>
         <div><span>Recontact</span><strong>{% if batch.allow_recontact %}Allowed{% else %}Blocked by default{% endif %}</strong></div>
       </div>

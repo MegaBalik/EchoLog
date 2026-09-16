@@ -8,8 +8,9 @@ from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
+from django.db.models import Q
 
-from .models import Batch, Recipient
+from .models import Batch, Recipient, SenderAccount
 
 
 CORE_FIELDS = ('name', 'email', 'country', 'company', 'website', 'domain', 'note')
@@ -183,6 +184,16 @@ def parse_contacts_file(uploaded_file):
     return normalized
 
 
+class SenderAccountForm(forms.ModelForm):
+    class Meta:
+        model = SenderAccount
+        fields = ['name', 'email', 'daily_limit']
+        widgets = {
+            'name': forms.TextInput(attrs={'placeholder': 'e.g. RB Translations or TRP'}),
+            'email': forms.EmailInput(attrs={'placeholder': 'you@example.com'}),
+        }
+
+
 class BatchCreateForm(forms.ModelForm):
     contacts_file = forms.FileField(
         help_text=(
@@ -193,11 +204,16 @@ class BatchCreateForm(forms.ModelForm):
 
     class Meta:
         model = Batch
-        fields = ['name', 'subject', 'body', 'daily_limit', 'allow_recontact']
+        fields = ['name', 'sender_account', 'subject', 'body', 'daily_limit', 'allow_recontact']
         widgets = {
             'body': forms.Textarea(attrs={'rows': 14, 'placeholder': 'Hello {Name},\n\n...'}),
             'subject': forms.TextInput(attrs={'placeholder': 'A short subject'}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['sender_account'].queryset = SenderAccount.objects.filter(active=True)
+        self.fields['sender_account'].label = 'Send from'
 
     def clean_contacts_file(self):
         uploaded = self.cleaned_data['contacts_file']
@@ -210,11 +226,22 @@ class BatchCreateForm(forms.ModelForm):
 class BatchMessageForm(forms.ModelForm):
     class Meta:
         model = Batch
-        fields = ['subject', 'body']
+        fields = ['sender_account', 'subject', 'body']
         widgets = {
             'subject': forms.TextInput(attrs={'placeholder': 'A short subject'}),
             'body': forms.Textarea(attrs={'rows': 14, 'placeholder': 'Hello {Name},\n\n...'}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        current_id = self.instance.sender_account_id if self.instance and self.instance.pk else None
+        qs = SenderAccount.objects.filter(active=True)
+        if current_id:
+            qs = SenderAccount.objects.filter(Q(active=True) | Q(pk=current_id))
+        self.fields['sender_account'].queryset = qs.distinct()
+        self.fields['sender_account'].label = 'Send from'
+        if self.instance and self.instance.pk and not self.instance.sender_editable:
+            self.fields['sender_account'].disabled = True
 
 
 class TestSendForm(forms.Form):

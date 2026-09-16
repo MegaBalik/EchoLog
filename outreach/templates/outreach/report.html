@@ -7,7 +7,8 @@
 </div>
 <form method="get" class="filters card">
   <input type="search" name="q" value="{{ filters.q }}" placeholder="Search name, company, email, metadata, notes">
-  <select name="batch"><option value="">All batches</option>{% for b in batches %}<option value="{{ b.id }}" {% if filters.batch == b.id|stringformat:'s' %}selected{% endif %}>{{ b.name }}</option>{% endfor %}</select>
+  <select name="sender"><option value="">All senders</option>{% for sender in sender_accounts %}<option value="{{ sender.id }}" {% if filters.sender == sender.id|stringformat:'s' %}selected{% endif %}>{{ sender.name }} · {{ sender.email }}</option>{% endfor %}</select>
+  <select name="batch"><option value="">All batches</option>{% for b in batches %}<option value="{{ b.id }}" {% if filters.batch == b.id|stringformat:'s' %}selected{% endif %}>{{ b.sender_account.name }} · {{ b.name }}</option>{% endfor %}</select>
   <select name="country"><option value="">All countries</option>{% for c in countries %}<option value="{{ c }}" {% if filters.country == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
   <select name="status">
     <option value="">All statuses</option>

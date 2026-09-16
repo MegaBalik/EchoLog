@@ -2,7 +2,7 @@
 {% block title %}{{ batch.name }} · EchoLog{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div><div class="eyebrow">Batch</div><h1>{{ batch.name }}</h1><p class="muted">{{ batch.total_count }} recipients · {{ batch.sent_count }} sent · {{ batch.replied_count }} replies</p></div>
+  <div><div class="eyebrow">Batch</div><h1>{{ batch.name }}</h1><p class="muted">{{ batch.sender_account.name }} · {{ batch.sender_account.email }} · {{ batch.total_count }} recipients · {{ batch.sent_count }} sent · {{ batch.replied_count }} replies</p></div>
   <div class="head-actions">
     <span class="pill status-pill-{{ batch.status }}">{{ batch.get_status_display }}</span>
     {% if batch.status == 'running' %}<form method="post" action="{% url 'outreach:batch_pause' batch.pk %}">{% csrf_token %}<button class="button button-warn" type="submit">Pause batch</button></form>
@@ -11,12 +11,12 @@
   </div>
 </div>
 
-{% if not gmail_connected %}<div class="message warning"><b>Gmail is not connected.</b> You can prepare and preview the batch, but it will not start sending. <a href="{% url 'outreach:google_connect' %}">Connect Gmail</a>.</div>{% endif %}
+{% if not gmail_connected %}<div class="message warning"><b>Gmail is not connected for {{ batch.sender_account.email }}.</b> You can prepare and preview the batch, but it will not start sending. <a href="{% url 'outreach:sender_google_connect' batch.sender_account.pk %}">Connect this sender</a>.</div>{% endif %}
 {% if previous_contacts and not batch.allow_recontact %}<div class="message warning">{{ previous_contacts }} imported contact{{ previous_contacts|pluralize }} were contacted in an older batch. They will be automatically skipped unless “allow recontact” is enabled for this batch.</div>{% endif %}
 
 <div class="three-col batch-kpis">
   <div class="card"><span class="muted">Queue</span><strong>{{ batch.queued_count }}</strong></div>
-  <div class="card"><span class="muted">Daily ceiling</span><strong>{{ batch.daily_limit }}</strong></div>
+  <div class="card"><span class="muted">Batch / sender ceiling</span><strong>{{ batch.daily_limit }} / {{ batch.sender_account.daily_limit }}</strong></div>
   <div class="card"><span class="muted">Follow-up due after</span><strong>{{ default_followup_days|default:14 }} days</strong></div>
 </div>
 
@@ -29,11 +29,13 @@
     {% if batch.message_editable %}
       <form method="post" action="{% url 'outreach:batch_edit_message' batch.pk %}" class="stack">
         {% csrf_token %}
+        <div class="field"><label for="{{ message_form.sender_account.id_for_label }}">Send from</label>{{ message_form.sender_account }}{% if not batch.sender_editable %}<div class="help">Sender is locked after the first real message has been sent.</div>{% endif %}{% for error in message_form.sender_account.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>
         <div class="field"><label for="{{ message_form.subject.id_for_label }}">Subject</label>{{ message_form.subject }}{% for error in message_form.subject.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>
         <div class="field"><label for="{{ message_form.body.id_for_label }}">Body</label>{{ message_form.body }}{% for error in message_form.body.errors %}<div class="field-error">{{ error }}</div>{% endfor %}</div>
-        <div class="row-actions"><button class="button button-primary" type="submit">Save message</button></div>
+        <div class="row-actions"><button class="button button-primary" type="submit">Save batch settings</button></div>
       </form>
     {% else %}
+      <div class="field"><label>Send from</label><div class="readbox">{{ batch.sender_account }}</div></div>
       <div class="field"><label>Subject</label><div class="readbox">{{ batch.subject }}</div></div>
       <div class="field"><label>Body</label><pre class="mail-body">{{ batch.body }}</pre></div>
     {% endif %}

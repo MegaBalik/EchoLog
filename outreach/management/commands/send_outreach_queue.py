@@ -3,7 +3,7 @@ from outreach.services import send_next
 
 
 class Command(BaseCommand):
-    help = 'Send at most one queued outreach email, respecting batch state, time window and daily limits.'
+    help = 'Send at most one queued outreach email, rotating fairly across running sender accounts.'
 
     def add_arguments(self, parser):
         parser.add_argument('--force-window', action='store_true', help='Ignore weekday/time window (daily limits still apply).')

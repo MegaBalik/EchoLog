@@ -1,0 +1,24 @@
+{% extends 'outreach/base.html' %}
+{% block title %}New sender · EchoLog{% endblock %}
+{% block content %}
+<div class="page-head"><div><div class="eyebrow">Sender account</div><h1>Add sender</h1><p class="muted">Create the outbound identity first, then EchoLog will connect that exact Gmail/Google Workspace mailbox through OAuth.</p></div></div>
+<div class="two-col">
+  <form method="post" class="card form-card stack">{% csrf_token %}
+    {% if form.non_field_errors %}<div class="message error">{{ form.non_field_errors }}</div>{% endif %}
+    {% for field in form %}
+      <div class="field">
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}
+        {% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}
+      </div>
+    {% endfor %}
+    <button class="button button-primary" type="submit">Create & connect Gmail</button>
+  </form>
+  <aside class="card side-card">
+    <h2>How it works</h2>
+    <p class="muted">Each sender has its own OAuth token and its own daily ceiling. The Google OAuth client itself stays shared by EchoLog.</p>
+    <p class="muted">A batch always points to one sender. Once that batch has sent its first message, its sender is locked so historical reporting and reply matching stay unambiguous.</p>
+  </aside>
+</div>
+{% endblock %}

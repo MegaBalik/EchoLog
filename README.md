@@ -15,11 +15,11 @@ It is generic: translation agencies, sports clubs, schools, SMEs, or any other l
 - Batch-specific frozen Subject + Body
 - Variables for all core fields plus custom metadata headers (e.g. `{Priority}`)
 - Collapsible batch queue/dashboard
-- Start / Pause; only one batch runs at a time
-- Global daily cap (default 30) + per-batch ceiling
+- Start / Pause; one running batch per sender account
+- Per-sender daily cap (default 30) + per-batch ceiling
 - Working-day send window (default 08:30–16:30 Europe/Prague)
 - One real message per scheduled worker run (recommended every 15 min)
-- Gmail API sending from the connected account
+- Gmail API sending from multiple explicit sender accounts, each with its own OAuth token
 - Gmail metadata-only reply detection (message bodies are not fetched)
 - `Follow-up due` computed automatically after 14 days without a reply
 - Separate editable business outcome: `Reject / Hopeful / Active`
@@ -94,8 +94,9 @@ For the deployed app:
    `/var/www/echolog/secrets/google_client_secret.json`
 
 7. Protect it so only the app user can read it.
-8. In EchoLog, click **Connect Gmail** and authorize `info@rb-translations.cz` once.
-9. EchoLog stores the refresh credentials in `google_token.json` (configured by `.env`) with mode 0600 where supported.
+8. EchoLog migration 0003 creates the first `SenderAccount` from the legacy `ECHOLOG_FROM_EMAIL` setting.
+9. Add further senders with **+ Sender** in the UI and authorize each mailbox separately.
+10. EchoLog stores one refresh-token file per sender inside `ECHOLOG_GOOGLE_TOKEN_DIR` (the original sender keeps the existing `google_token.json`).
 
 For local OAuth testing, add this redirect URI to the same web client if Google accepts the loopback URI for your client configuration:
 
@@ -116,13 +117,13 @@ python manage.py send_outreach_queue
 
 The command sends **at most one real message** per invocation. It immediately skips suppressed/previously-contacted queue entries without wasting timer slots.
 
-With the default 08:30–16:30 window and global daily cap 30, this naturally spreads messages through the working day. The global cap is authoritative even if a batch has a higher per-batch ceiling.
+With the default 08:30–16:30 window and sender daily cap 30, this naturally spreads messages through the working day. Each sender has its own ceiling; the batch ceiling can further restrict a specific campaign. Different senders may have running batches at the same time, and the worker rotates fairly between them.
 
 The queue worker refuses to send:
 - outside the configured window / on weekends,
-- above the global daily cap,
+- above that sender account’s daily cap,
 - above the current batch daily ceiling,
-- if no batch is Running,
+- if no eligible batch is Running,
 - to Do-not-contact or bounced contacts,
 - to previously contacted addresses unless the new batch explicitly allows recontact.
 
@@ -149,12 +150,13 @@ Obvious mailer-daemon/postmaster messages inside a matching thread are marked `B
 
 Copy `.env.example` and change secrets/hostnames. Important settings:
 
-- `ECHOLOG_DAILY_LIMIT=30`
+- `ECHOLOG_DEFAULT_SENDER_DAILY_LIMIT=30` (legacy `ECHOLOG_DAILY_LIMIT` is still accepted)
 - `ECHOLOG_SEND_WINDOW_START=08:30`
 - `ECHOLOG_SEND_WINDOW_END=16:30`
 - `ECHOLOG_SEND_WEEKDAYS_ONLY=1`
 - `ECHOLOG_DEFAULT_FOLLOWUP_DAYS=14`
-- `ECHOLOG_FROM_EMAIL=info@rb-translations.cz`
+- `ECHOLOG_FROM_EMAIL=info@rb-translations.cz` (legacy bootstrap value for migration 0003)
+- `ECHOLOG_GOOGLE_TOKEN_DIR=/var/www/echolog/secrets`
 
 ## 7. Production deployment pattern
 
