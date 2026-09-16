@@ -80,19 +80,25 @@ def _running_batch_ids_by_turn():
     )
 
 
-def send_next(now=None, force_window=False):
-    """Send at most one real email.
+def send_next(now=None, force_window=False, sender_account_id=None):
+    """Send at most one real email for the requested sender account.
 
-    Each sender account has its own OAuth token and daily ceiling. At most one batch per
-    sender is intended to be Running; batches from different senders may run in parallel.
-    The worker still sends only one real message per invocation and rotates fairly across
-    running batches.
+    Each sender account has its own OAuth token and daily ceiling.
+    Batches from different senders may run independently in parallel.
     """
     now = now or timezone.now()
     if not force_window and not in_send_window(now):
         return {'sent': False, 'reason': 'outside_window'}
 
     candidate_ids = _running_batch_ids_by_turn()
+
+    if sender_account_id is not None:
+        candidate_ids = list(
+            Batch.objects.filter(
+                id__in=candidate_ids,
+                sender_account_id=sender_account_id,
+            ).values_list('id', flat=True)
+    )
     if not candidate_ids:
         return {'sent': False, 'reason': 'no_running_batch'}
 
